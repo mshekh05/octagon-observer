@@ -15,7 +15,7 @@ function ParlayCard({ p }: { p: Parlay }) {
             {surname(leg.name)}
           </span>
         ))}
-        <span className="value fig">{americanInt(p.american)}</span>
+        <span className="prob fig">{americanInt(p.american)}</span>
       </div>
       <div className="bout-foot">
         <span className="figs fig">
@@ -46,14 +46,15 @@ export function ParlaysPage() {
   if (!parlays.data) return <main><h1>Parlays</h1><Loading /></main>;
   return (
     <main>
+      <div className="topbar"><Link to="/" className="back">← Card</Link></div>
       <h1>Parlays</h1>
-      <p className="meta">Built from fights where a sportsbook price already beats our blended estimate on its own. Treat these as entertainment: the backtest against historical prices found no proven edge even in single bets, and a parlay multiplies any error in our estimate along with the payout. Suggested stakes are capped at a quarter of the single-bet cap.</p>
+      <p className="meta">Combos of today's single-bet picks only, so a leg is never something too thin to bet on its own. Treat them as entertainment: a parlay multiplies any error in our estimate along with the payout, and the backtests found no proven edge even in single bets. Suggested stakes are capped at a quarter of the single-bet cap.</p>
       <section className="sheet" aria-labelledby="parlay-h" style={{ marginTop: 16 }}>
         <div className="sheet-head"><h2 id="parlay-h">Ranked by expected value</h2><span className="meta fig">{parlays.data.length}</span></div>
         {parlays.data.length ? (
           <ul className="list">{parlays.data.map((p, i) => <ParlayCard key={i} p={p} />)}</ul>
         ) : (
-          <p className="pad meta" style={{ margin: 0 }}>No positive-EV combo right now &mdash; check back as lines move, or see <Link to="/">the card</Link> for single-fight picks.</p>
+          <p className="pad meta" style={{ margin: 0 }}>No combos: a parlay needs at least two single-bet picks on <Link to="/">the card</Link>, and right now there {"aren't"} enough.</p>
         )}
       </section>
     </main>

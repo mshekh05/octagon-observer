@@ -165,6 +165,66 @@ def _cache_series(series: set[str]) -> None:
     SERIES_CACHE.write_text(json.dumps(sorted(set(_cached_series()) | series)))
 
 
+# ---------- props (Kalshi) ----------
+
+KALSHI_PROP_SERIES = {"distance": "KXUFCDISTANCE", "method": "KXUFCMOV"}
+METHODS = (("KO", "ko"), ("SUB", "sub"), ("DEC", "dec"))  # keyword in yes_sub_title -> outcome code
+
+
+def _event_code(event_ticker: str) -> str:
+    """'KXUFCMOV-26OCT24YANDVA' -> '26OCT24YANDVA': shared by a fight's winner, method and distance markets."""
+    return event_ticker.split("-", 1)[-1]
+
+
+def parse_kalshi_props(fight_markets: list[dict], prop_markets: dict[str, list[dict]],
+                       card: Card) -> dict[str, dict]:
+    """fight key -> {"distance": P(goes the distance), "method": {"a_ko": p, ..., "draw": p}}.
+
+    Method prices are normalised to sum to 1 across the seven outcomes (each side's
+    KO/TKO, submission and decision, plus draw/no contest), so they read as fair chances.
+    """
+    code_to_fight = {}
+    for m in fight_markets:
+        who = m.get("yes_sub_title") or ""
+        for f in card.fights:
+            if who and f.side_of(who) is not None:
+                code_to_fight[_event_code(m["event_ticker"])] = f
+                break
+    out: dict[str, dict] = {}
+    for m in prop_markets.get("distance", []):
+        f = code_to_fight.get(_event_code(m["event_ticker"]))
+        price = _kalshi_price(m)
+        if f and price is not None:
+            out.setdefault(f.key, {})["distance"] = price
+    raw: dict[str, dict[str, float]] = {}
+    for m in prop_markets.get("method", []):
+        f = code_to_fight.get(_event_code(m["event_ticker"]))
+        price = _kalshi_price(m) or 0.0
+        label = m.get("yes_sub_title") or ""
+        if not f:
+            continue
+        if "draw" in label.lower():
+            raw.setdefault(f.key, {})["draw"] = price
+            continue
+        name, _, method = label.rpartition(" by ")
+        side = f.side_of(name)
+        code = next((c for kw, c in METHODS if kw in method.upper()), None)
+        if side is not None and code:
+            raw.setdefault(f.key, {})[f"{'ab'[side]}_{code}"] = price
+    for key, outcomes in raw.items():
+        total = sum(outcomes.values())
+        if total > 0 and len([k for k in outcomes if k != "draw"]) == 6:
+            out.setdefault(key, {})["method"] = {k: v / total for k, v in outcomes.items()}
+    return out
+
+
+def fetch_kalshi_props(card: Card, http: httpx.Client) -> dict[str, dict]:
+    fights = _paged(http, KALSHI_URL, {"series_ticker": KALSHI_SERIES[0], "status": "open", "limit": 1000}, "markets")
+    props = {name: _paged(http, KALSHI_URL, {"series_ticker": s, "status": "open", "limit": 1000}, "markets")
+             for name, s in KALSHI_PROP_SERIES.items()}
+    return parse_kalshi_props(fights, props, card)
+
+
 def fetch_polymarket(card: Card, http: httpx.Client) -> dict[str, MarketProb]:
     resp = http.get(POLY_URL, params={"tag_slug": "ufc", "closed": "false", "limit": 200})
     resp.raise_for_status()

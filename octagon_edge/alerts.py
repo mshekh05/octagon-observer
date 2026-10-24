@@ -63,11 +63,14 @@ def _am(dec: float) -> str:
 class AlertEngine:
     def __init__(self, bankroll: float, kelly: float, max_pct: float, edge_pre: float,
                  edge_live: float, model_weight: float, cooldown_sec: int = 600,
-                 line_move: float = 0.05, swing: float = 0.08, swing_window_sec: int = 300):
+                 line_move: float = 0.05, swing: float = 0.08, swing_window_sec: int = 300,
+                 usable_books: tuple[str, ...] = (), home_book: str = ""):
         self.bankroll, self.kelly, self.max_pct = bankroll, kelly, max_pct
         self.edge_pre, self.edge_live, self.model_weight = edge_pre, edge_live, model_weight
         self.cooldown, self.line_move, self.swing, self.swing_window = cooldown_sec, line_move, swing, swing_window_sec
         self.sent: dict[str, tuple[float, float]] = {}  # key -> (ts, score)
+        self.usable_books = tuple(usable_books)
+        self.home_book = home_book
 
     def _value(self, kind, fight, name, p, book, dec, threshold, why, urgent, shrink=1.0) -> Alert | None:
         e = E.edge(p, dec)
@@ -77,6 +80,9 @@ class AlertEngine:
         body = (f"{name} {_am(dec)} at {book}\n"
                 f"Our prob {p * 100:.1f}% vs price {100 / dec:.1f}% → edge {e * 100:+.1f} pts, EV {E.expected_value(p, dec) * 100:+.1f}%\n"
                 f"Stake ≤ {st.amount:,.0f} ({st.fraction * 100:.1f}% bankroll)\n{why}")
+        bet_at = E.bet_at_decimal(p, threshold)
+        if self.home_book and book != self.home_book and bet_at:
+            body += f"\nAt {self.home_book}: worth it at {_am(bet_at)} or better."
         return Alert(kind, fight, f"{'LIVE ' if urgent else ''}VALUE: {name} {_am(dec)}", body, urgent,
                      key=f"{kind}|{fight}|{name}", score=e)
 
@@ -106,8 +112,10 @@ class AlertEngine:
                                  f"{st.a} fair prob {st.first_market * 100:.0f}% → {fair * 100:.0f}% since watch began.",
                                  False, key=f"move|{fight}|{side}", score=abs(fair - st.first_market)))
 
+        # the consensus above uses every book; prices to bet come only from books you can use
+        shop_books = {k: v for k, v in books.items() if not self.usable_books or k in self.usable_books}
         for side in (0, 1):
-            bp = best_price(books, side) if books else None
+            bp = best_price(shop_books, side) if shop_books else None
             if not bp:
                 continue
             book, dec = bp

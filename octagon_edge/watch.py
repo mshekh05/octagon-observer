@@ -45,7 +45,7 @@ def run(card: Card, hist, pipe, s: Settings, pm_every: int = 20, odds_every: int
         hours: float = 12, targets_path: Path | None = None, once: bool = False) -> None:
     notifier = Notifier(s)
     engine = AlertEngine(s.bankroll, s.kelly_fraction, s.max_stake_pct, s.edge_prefight,
-                         s.edge_live, s.model_weight)
+                         s.edge_live, s.model_weight, usable_books=s.usable_books, home_book=s.home_book)
     odds_client = OddsApiClient(s.odds_api_key, s.odds_api_regions, s.odds_api_budget) if s.odds_api_key else None
     on = pd.Timestamp(card.date)
     states = {}

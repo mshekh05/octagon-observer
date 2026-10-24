@@ -76,6 +76,15 @@ def final_prob(p_model: float | None, p_market: float | None, model_weight: floa
     return p
 
 
+def bet_at_decimal(p: float, threshold: float) -> float | None:
+    """The worst price still worth taking: the decimal where our edge equals the threshold.
+
+    Any price at or above it clears the bar, which lets you check a book the app can't
+    see (e.g. Fanatics) against a single number. None when no price could clear it.
+    """
+    return None if p - threshold <= 0.01 else 1 / (p - threshold)
+
+
 def edge(p: float, decimal: float) -> float:
     """Probability edge over the price's implied probability."""
     return p - 1 / decimal

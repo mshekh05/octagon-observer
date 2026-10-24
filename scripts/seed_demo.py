@@ -12,7 +12,7 @@ import random
 from datetime import timedelta
 
 from octagon_edge import services as S
-from octagon_edge.db import AlertRow, Bet, OddsSnapshot, sessions, utcnow
+from octagon_edge.db import AlertRow, Bet, OddsSnapshot, put_setting, sessions, utcnow
 from octagon_edge.engine.live import RoundInput
 from octagon_edge.engine.odds_math import devig_power
 from octagon_edge.ingest.news import NewsItem
@@ -62,8 +62,15 @@ def main() -> None:
             books = {b: price_pair(base, rng) for b in BOOKS}
             if fight.order == 1:  # make one clear value spot so the UI has something to show
                 da, dbb = books["BetMGM"]
-                books["BetMGM"] = (da, dbb * 1.12)
-            odds[f.key] = FightOdds(books=books)
+                books["BetMGM"] = (da, dbb * 1.25)
+            # total rounds at every book; one soft book on the third fight so a prop flag shows
+            line = fight.rounds - 0.5
+            p_over = min(max(0.55 + rng.uniform(-0.15, 0.15), 0.2), 0.8)
+            totals = {b: (line, *price_pair(p_over, rng)) for b in BOOKS}
+            if fight.order == 2:
+                pt, over, under = totals["Caesars"]
+                totals["Caesars"] = (pt, over * 1.2, under)
+            odds[f.key] = FightOdds(books=books, totals=totals)
             pms[f.key] = [MarketProb("Kalshi", base)]
         items = [
             NewsItem("r/MMA", "Evloev looked sharp at open workouts, cardio questions answered", "https://example.com/demo-1",
@@ -76,6 +83,18 @@ def main() -> None:
         status = {"The Odds API (US books)": "ok: SIMULATED demo prices", "Kalshi / Polymarket": "ok: SIMULATED demo prices",
                   "News": "ok: 3 SIMULATED demo items"}
         S.refresh_analysis(db, ev, hist, pipe, None, with_news=False, with_llm=False, sources=(odds, pms, items, {}, status))
+        S._store_totals(db, ev, odds)
+        props = {}
+        for f, fight in zip(card.fights, ev.fights):
+            p_a = odds[f.key].books and devig_power(list(odds[f.key].books["DraftKings"]))[0]
+            dist = min(max(0.5 + rng.uniform(-0.25, 0.25), 0.15), 0.85)
+            split = {"ko": 0.55, "sub": 0.45}
+            props[f.key] = {"distance": dist, "method": {
+                "a_dec": p_a * dist, "b_dec": (1 - p_a) * dist,
+                **{f"a_{k}": p_a * (1 - dist) * v for k, v in split.items()},
+                **{f"b_{k}": (1 - p_a) * (1 - dist) * v for k, v in split.items()}}}
+        S._store_kalshi_props(db, ev, props)
+        put_setting(db, "targets", {ev.fights[0].a: 2.2})
 
         # main event is live: two rounds scored
         main_fight = ev.fights[0]

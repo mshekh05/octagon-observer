@@ -36,9 +36,13 @@ class Parlay:
     stake_pct: float
 
 
-def build_legs(fights: list[dict], min_edge: float = 0.0) -> list[Leg]:
+def build_legs(fights: list[dict], min_edge: float = 0.0, picks_only: bool = False) -> list[Leg]:
     """fights: dicts with id, key (a vs b), a, b, p_final and a 2-item 'sides'
-    list (book/decimal/edge per side), as stored in Prediction.details."""
+    list (book/decimal/edge per side), as stored in Prediction.details.
+
+    picks_only: a leg must be the fight's single-bet pick (its `pick_side`), so a parlay is
+    never built from edges too small to bet on their own.
+    """
     legs: list[Leg] = []
     for f in fights:
         p_final = f.get("p_final")
@@ -46,6 +50,8 @@ def build_legs(fights: list[dict], min_edge: float = 0.0) -> list[Leg]:
         if p_final is None or len(sides) != 2:
             continue
         for side, sv in enumerate(sides):
+            if picks_only and f.get("pick_side") != side:
+                continue
             if sv.get("decimal") is None or sv.get("edge") is None or sv["edge"] <= min_edge:
                 continue
             p = p_final if side == 0 else 1 - p_final

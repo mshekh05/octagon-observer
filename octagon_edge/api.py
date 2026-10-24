@@ -18,7 +18,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import services as S
@@ -81,10 +81,24 @@ def _pm_latest(db: Session, f: Fight) -> dict:
     return out
 
 
-def fight_summary(db: Session, f: Fight) -> dict:
+def _prices_ts(db: Session, f: Fight) -> str | None:
+    ts = db.scalar(select(func.max(OddsSnapshot.ts)).where(OddsSnapshot.fight_id == f.id,
+                                                           OddsSnapshot.source == "odds_api"))
+    return ts.isoformat() if ts else None
+
+
+def fight_summary(db: Session, f: Fight, s=None, targets: dict | None = None) -> dict:
     pred = latest(db, Prediction, f.id)
     est = latest(db, LiveEstimate, f.id)
+    s = s or S.effective_settings(db)
+    targets = S.db_targets(db) if targets is None else targets
+    details = pred.details if pred else {}
+    props = S.props_view(db, f, s)
     return {
+        "sides": details.get("sides"), "pricing": details.get("pricing"),
+        "prices_ts": _prices_ts(db, f),
+        "targets": [targets.get(f.a), targets.get(f.b)],
+        "prop_flags": props["flags"],
         "id": f.id, "a": f.a, "b": f.b, "weightclass": f.weightclass, "segment": f.segment, "rounds": f.rounds,
         "title": f.title, "status": f.status, "winner": f.winner, "order": f.order,
         "record_a": pred.details.get("record_a") if pred else None,
@@ -129,8 +143,10 @@ def event(slug: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Event not found")
     preds = [latest(db, Prediction, f.id) for f in ev.fights]
     sources = next((p.details.get("sources") for p in preds if p and p.details.get("sources")), {})
+    s, targets = S.effective_settings(db), S.db_targets(db)
     return {"slug": ev.slug, "name": ev.name, "date": ev.date, "venue": ev.venue, "note": ev.note,
-            "sources": sources, "fights": [fight_summary(db, f) for f in ev.fights]}
+            "sources": sources, "home_book": s.home_book,
+            "fights": [fight_summary(db, f, s, targets) for f in ev.fights]}
 
 
 @app.get("/api/events/{slug}/parlays", dependencies=[api])
@@ -148,10 +164,13 @@ def parlays(slug: str, legs: str = "2,3", limit: int = 15, db: Session = Depends
         pred = latest(db, Prediction, f.id)
         if not pred:
             continue
-        rows.append({"id": f.id, "a": f.a, "b": f.b, "p_final": pred.p_final, "sides": pred.details.get("sides")})
+        rows.append({"id": f.id, "a": f.a, "b": f.b, "p_final": pred.p_final, "sides": pred.details.get("sides"),
+                     "pick_side": pred.pick_side})
     sizes = tuple(int(n) for n in legs.split(",") if n.strip())
-    # A parlay multiplies any error in our estimate, so its stake cap is a quarter of a single bet's.
-    combos = generate_parlays(build_legs(rows), sizes, s.bankroll, s.kelly_fraction, s.max_stake_pct / 4, limit)
+    # Legs are only today's single-bet picks; a parlay multiplies any error in our estimate,
+    # so its stake cap is a quarter of a single bet's.
+    combos = generate_parlays(build_legs(rows, picks_only=True), sizes, s.bankroll, s.kelly_fraction,
+                              s.max_stake_pct / 4, limit)
     return [{
         "decimal": c.decimal, "american": decimal_to_american(c.decimal),
         "p": c.p, "edge": c.edge, "ev": c.ev, "stake": c.stake, "stake_pct": c.stake_pct,
@@ -182,6 +201,65 @@ def fight(fight_id: int, db: Session = Depends(get_db)):
     f = _fight(db, fight_id)
     pred = latest(db, Prediction, f.id)
     return {**fight_summary(db, f), "event": f.event.slug, "details": pred.details if pred else {}}
+
+
+@app.get("/api/fights/{fight_id}/props", dependencies=[api])
+def props(fight_id: int, db: Session = Depends(get_db)):
+    """Kalshi prop fair prices and sportsbook total-rounds line shopping."""
+    return S.props_view(db, _fight(db, fight_id), S.effective_settings(db))
+
+
+class TargetBody(BaseModel):
+    side: int = Field(ge=0, le=1)
+    american: float | None = None  # None clears the target
+
+
+@app.put("/api/fights/{fight_id}/target", dependencies=[api])
+def set_target(fight_id: int, body: TargetBody, db: Session = Depends(get_db)):
+    """Alert when a tracked book offers this price (or better) on one fighter."""
+    from .db import get_setting
+
+    f = _fight(db, fight_id)
+    name = f.a if body.side == 0 else f.b
+    targets = dict(get_setting(db, "targets", {}) or {})
+    if body.american is None:
+        targets.pop(name, None)
+    else:
+        if abs(body.american) < 100:
+            raise HTTPException(400, "US odds are +100 or more, or -100 or less")
+        targets[name] = american_to_decimal(body.american)
+    put_setting(db, "targets", targets)
+    db.commit()
+    return {"targets": [targets.get(f.a), targets.get(f.b)]}
+
+
+@app.get("/api/books", dependencies=[api])
+def books(db: Session = Depends(get_db)):
+    """Sportsbooks seen in the price feed, and which ones you can bet at."""
+    s = S.effective_settings(db)
+    seen = sorted(set(db.scalars(select(OddsSnapshot.book).where(OddsSnapshot.source == "odds_api",
+                                                               OddsSnapshot.book.is_not(None))).all()))
+    return {"seen": seen, "usable": list(s.usable_books), "home": s.home_book,
+            "home_in_feed": s.home_book in seen}
+
+
+class BooksBody(BaseModel):
+    home: str | None = Field(default=None, max_length=60)
+    usable: list[str] | None = None  # [] = all books
+
+
+@app.put("/api/books", dependencies=[api])
+def put_books(body: BooksBody, db: Session = Depends(get_db)):
+    from .db import get_setting
+
+    current = dict(get_setting(db, "books", {}) or {})
+    if body.home is not None:
+        current["home"] = body.home.strip()
+    if body.usable is not None:
+        current["usable"] = [b for b in body.usable if b]
+    put_setting(db, "books", current)
+    db.commit()
+    return books(db)
 
 
 @app.get("/api/fights/{fight_id}/odds", dependencies=[api])
@@ -407,6 +485,7 @@ def get_settings(db: Session = Depends(get_db)):
     return {"tuning": {k: getattr(s, k) for k in S.TUNABLE},
             "channels": Notifier(s).channels + (["webpush"] if db.scalars(select(PushSubscription)).first() else []),
             "llm_provider": s.llm_provider, "odds_api": bool(s.odds_api_key), "vapid_public_key": ensure_keys(),
+            "home_book": s.home_book,
             "active_card": os.environ.get("ACTIVE_CARD", "ufc-333")}
 
 

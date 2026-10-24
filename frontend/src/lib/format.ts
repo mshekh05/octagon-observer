@@ -12,6 +12,16 @@ export function american(decimal: number | null | undefined): string {
 
 export const surname = (name: string) => name.split(" ").slice(-1)[0];
 
+/** US odds text ("+150", "-120") to a decimal price; null when it isn't a valid price. */
+export function decimalFrom(text: string): number | null {
+  const a = Number(text.replace("−", "-").replace("+", "").trim());
+  if (!Number.isFinite(a) || Math.abs(a) < 100) return null;
+  return a > 0 ? 1 + a / 100 : 1 + 100 / -a;
+}
+
+/** "−160 or better" style threshold text for a decimal price. */
+export const orBetter = (decimal: number | null | undefined) => (decimal ? `${american(decimal)} or better` : "no price works");
+
 export const americanInt = (a: number) => (a > 0 ? `+${a}` : `−${Math.abs(a)}`);
 
 export const money = (n: number | null | undefined) =>

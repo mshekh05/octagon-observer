@@ -82,6 +82,21 @@ class OddsSnapshot(Base):
     p_a: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class PropSnapshot(Base):
+    """Prop prices: sportsbook total rounds (decimal per outcome) and Kalshi props (probability)."""
+    __tablename__ = "prop_snapshot"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fight_id: Mapped[int] = mapped_column(ForeignKey("fight.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    source: Mapped[str] = mapped_column(String(30))  # odds_api | Kalshi
+    market: Mapped[str] = mapped_column(String(30))  # total_rounds | distance | method
+    book: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    point: Mapped[float | None] = mapped_column(Float, nullable=True)  # rounds line for totals
+    outcome: Mapped[str] = mapped_column(String(20))  # over/under | yes | a_ko, a_sub, a_dec, b_..., draw
+    decimal: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class AlertRow(Base):
     __tablename__ = "alert"
     id: Mapped[int] = mapped_column(primary_key=True)
