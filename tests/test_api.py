@@ -99,3 +99,20 @@ def test_record_round_service_without_model(client):
         f = S.sync_card(db, "ufc-333").fights[1]
         est = S.record_round(db, f, 1, RoundInput(winner=1), live_model=FakeLive())
         assert est.p_live == pytest.approx(0.35)  # no prediction stored -> 0.5 prior, B won round 1
+
+
+def test_fighter_notes_and_photo_override(client):
+    assert client.get("/api/fighters/notes", params={"name": "Daniel Santos"}).json()["notes"] == ""
+    r = client.put("/api/fighters/notes", json={"name": "Daniel Santos", "notes": "Looked flat at weigh-ins",
+                                                "photo_url": "https://example.com/santos.jpg"})
+    assert r.status_code == 200 and r.json()["notes"] == "Looked flat at weigh-ins"
+    assert client.get("/api/fighters/image", params={"name": "Daniel Santos"}).json()["url"] == "https://example.com/santos.jpg"
+    assert client.put("/api/fighters/notes", json={"name": "X", "photo_url": "javascript:alert(1)"}).status_code == 422
+
+
+def test_prop_bet_is_logged_with_its_outcome(client):
+    fid = client.get("/api/events/ufc-333").json()["fights"][0]["id"]
+    r = client.post("/api/bets", json={"fight_id": fid, "side": 1, "market": "prop", "outcome": "b_ko", "american": 385, "stake": 20})
+    assert r.status_code == 200 and r.json()["pick"].endswith("by KO/TKO")
+    assert client.post("/api/bets", json={"fight_id": fid, "side": 1, "market": "prop", "outcome": "zz", "american": 385,
+                                          "stake": 20}).status_code == 400

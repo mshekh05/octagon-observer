@@ -200,6 +200,15 @@ class Bet(Base):
     note: Mapped[str] = mapped_column(Text, default="")
 
 
+class FighterNote(Base):
+    """Your own notes on a fighter (by name, so they carry over to later cards), and a photo URL override."""
+    __tablename__ = "fighter_note"
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    photo_url: Mapped[str] = mapped_column(String(500), default="")
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
 class PaperPick(Base):
     """Every pick and value alert the engine made, bet or not, so it can be scored against the close.
 

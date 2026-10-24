@@ -57,6 +57,8 @@ def test_fighter_photo_needs_an_mma_item_and_is_cached(tmp_path):
     calls = []
 
     def handler(request):
+        if request.url.host == "www.ufc.com":  # not on the UFC roster: falls back to Wikidata
+            return httpx.Response(200, text="<title>Search results | UFC</title>")
         calls.append(request.url.params["action"])
         if request.url.params["action"] == "wbsearchentities":
             return httpx.Response(200, json={"search": [
@@ -139,3 +141,19 @@ def test_old_databases_get_new_columns(tmp_path):
     with sessions(f"sqlite:///{path}")() as session:
         b = session.query(Bet).one()
         assert b.market == "moneyline" and b.outcome == ""
+
+
+def test_fighter_photo_prefers_the_ufc_athlete_page(tmp_path):
+    import httpx
+
+    from octagon_edge.ingest import images
+
+    assert images.ufc_slug("Lone'er Kavanagh") == "loneer-kavanagh" and images.ufc_slug("Iasmin Lucíndo") == "iasmin-lucindo"
+
+    def handler(request):
+        assert request.url.path == "/athlete/colby-thicknesse"
+        return httpx.Response(200, text='<meta property="og:image" content="https://ufc.com/images/2026-10/THICKNESSE_COLBY_10-24.png" />')
+
+    found = images.lookup("Colby Thicknesse", httpx.Client(transport=httpx.MockTransport(handler)), tmp_path / "img.json")
+    assert found == {"url": "https://www.ufc.com/images/2026-10/THICKNESSE_COLBY_10-24.png",
+                     "credit": "https://www.ufc.com/athlete/colby-thicknesse"}

@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from . import services as S
 from .config import ROOT
-from .db import (AlertRow, Bet, Event, Fight, LiveEstimate, LiveRound, OddsSnapshot, Prediction, PushSubscription,
+from .db import (AlertRow, Bet, Event, Fight, FighterNote, LiveEstimate, LiveRound, OddsSnapshot, Prediction, PushSubscription,
                  SocialPost, latest, put_setting, sessions)
 from .engine.live import RoundInput
 from .engine.odds_math import american_to_decimal, consensus_fair_prob, decimal_to_american
@@ -244,13 +244,42 @@ def set_target(fight_id: int, body: TargetBody, db: Session = Depends(get_db)):
     return {"targets": [targets.get(f.a), targets.get(f.b)]}
 
 
+class FighterNoteBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    notes: str = Field(default="", max_length=5000)
+    photo_url: str = Field(default="", max_length=500, pattern=r"^(https://\S+)?$")
+
+
+def _note_json(name: str, n: FighterNote | None) -> dict:
+    return {"name": name, "notes": n.notes if n else "", "photo_url": n.photo_url if n else "",
+            "updated_at": n.updated_at.isoformat() if n and n.updated_at else None}
+
+
+@app.get("/api/fighters/notes", dependencies=[api])
+def fighter_notes(name: str, db: Session = Depends(get_db)):
+    return _note_json(name, db.get(FighterNote, name.strip()))
+
+
+@app.put("/api/fighters/notes", dependencies=[api])
+def save_fighter_notes(body: FighterNoteBody, db: Session = Depends(get_db)):
+    name = body.name.strip()
+    n = db.get(FighterNote, name) or FighterNote(name=name)
+    n.notes, n.photo_url = body.notes, body.photo_url.strip()
+    db.merge(n)
+    db.commit()
+    return _note_json(name, db.get(FighterNote, name))
+
+
 @app.get("/api/fighters/image", dependencies=[api])
-def fighter_image(name: str):
-    """A freely licensed photo of the fighter from Wikipedia, cached on the server; url is null when none exists."""
+def fighter_image(name: str, db: Session = Depends(get_db)):
+    """The fighter's photo (your saved link, else UFC.com, else Wikimedia), cached on the server; url is null when none exists."""
     import httpx
 
     from .ingest import images
 
+    note = db.get(FighterNote, name.strip())
+    if note and note.photo_url:
+        return {"name": name, "url": note.photo_url, "credit": None}
     try:
         with httpx.Client(timeout=10, follow_redirects=True) as http:
             found = images.lookup(name.strip()[:80], http)

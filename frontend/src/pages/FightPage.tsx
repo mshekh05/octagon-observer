@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api, post, type Books, type FightDetail, type LiveState, type Props, type Series, type SettingsData,
   type SocialSide } from "../lib/api";
-import { american, decimalFrom, orBetter, pct, pts, surname } from "../lib/format";
+import { ago, american, decimalFrom, orBetter, pct, pts, surname } from "../lib/format";
 import { FighterPhoto, usePhoto } from "../components/FighterPhoto";
 import { ProbChart } from "../components/ProbChart";
 import { RoundStrip } from "../components/RoundStrip";
@@ -38,9 +38,66 @@ function PhotoCredits({ names }: { names: string[] }) {
   if (!credits.length) return null;
   return (
     <p className="meta" style={{ textAlign: "center", margin: "4px 0 0" }}>
-      Photos: {credits.map((p, i) => <span key={p!.name}>{i ? " · " : ""}<a href={p!.credit!} target="_blank" rel="noreferrer">Wikimedia Commons</a></span>)}
+      Photos: {credits.map((p, i) => <span key={p!.name}>{i ? " · " : ""}<a href={p!.credit!} target="_blank" rel="noreferrer">
+        {p!.credit!.includes("ufc.com") ? "UFC.com" : "Wikimedia Commons"}</a></span>)}
     </p>
   );
+}
+
+interface Note { name: string; notes: string; photo_url: string; updated_at: string | null }
+
+/** Your notes on a fighter, kept by name so they show again on later cards; optional photo link. */
+function FighterNotes({ name }: { name: string }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["notes", name], queryFn: () => api<Note>(`/fighters/notes?name=${encodeURIComponent(name)}`) });
+  const [notes, setNotes] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: () => api<Note>("/fighters/notes", { method: "PUT", body: JSON.stringify({
+      name, notes: notes ?? q.data?.notes ?? "", photo_url: photo ?? q.data?.photo_url ?? "" }) }),
+    onSuccess: (n) => {
+      qc.setQueryData(["notes", name], n);
+      qc.invalidateQueries({ queryKey: ["photo", name] });
+      setNotes(null); setPhoto(null);
+    },
+  });
+  const dirty = notes != null || photo != null;
+  return (
+    <form className="pad stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <label className="field">{name}
+        <textarea className="in" rows={3} value={notes ?? q.data?.notes ?? ""} placeholder="Camp, injuries, how they looked at weigh-ins…"
+          onChange={(e) => setNotes(e.target.value)} />
+      </label>
+      <details>
+        <summary className="meta" style={{ cursor: "pointer", minHeight: 32 }}>Photo link (optional)</summary>
+        <input className="in" inputMode="url" value={photo ?? q.data?.photo_url ?? ""} placeholder="https://…"
+          onChange={(e) => setPhoto(e.target.value)} />
+      </details>
+      <button className="btn" disabled={!dirty || save.isPending}>{save.isPending ? "Saving…" : dirty ? "Save notes" : q.data?.updated_at ? `Saved ${ago(q.data.updated_at)}` : "Save notes"}</button>
+      {save.error && <p className="error">{(save.error as Error).message}</p>}
+    </form>
+  );
+}
+
+/** One plain sentence: who the market favours, whether we agree, and what price would make it a bet. */
+export function oddsLine(f: FightDetail, home: string): string | null {
+  const pr = f.pricing;
+  if (f.p_market == null || f.p_final == null || !pr) return null;
+  const names = [surname(f.a), surname(f.b)];
+  const fav = f.p_market >= 0.5 ? 0 : 1;
+  const pm = fav === 0 ? f.p_market : 1 - f.p_market;
+  const ours = fav === 0 ? f.p_final : 1 - f.p_final;
+  const market = Math.abs(pm - 0.5) < 0.03
+    ? `The books see a coin flip (${names[0]} ${pct(f.p_market)}, ${names[1]} ${pct(1 - f.p_market)})`
+    : `The books make ${names[fav]} ${/^(8|11|18)/.test(pct(pm)) ? "an" : "a"} ${pct(pm)} favourite (fair ${american(pr.fair_dec[fav])})`;
+  const agree = Math.abs(ours - pm) < 0.02 ? "we agree" : `we have ${names[fav]} at ${pct(ours)}`;
+  if (f.pick) {
+    const s = f.pick.side;
+    return `${market}; ${agree}. ${f.pick.book}'s ${american(f.pick.decimal)} on ${names[s]} beats fair ${american(pr.fair_dec[s])}: bet ${names[s]}, up to ${Math.round(f.pick.stake)}.`;
+  }
+  const worth = ([0, 1] as const).filter((i) => pr.bet_at_dec[i]).map((i) => `${names[i]} ${american(pr.bet_at_dec[i])}`);
+  return `${market}; ${agree}, and no book beats that, so there's no bet on the winner.`
+    + (worth.length ? ` It becomes one at ${home} at ${worth.join(" or ")} or better.` : "");
 }
 
 function TapeTable({ f, rows }: { f: FightDetail; rows: TapeRow[] }) {
@@ -258,6 +315,7 @@ export function FightPage() {
           {f.pick
             ? <div className="call yes fig">Bet {surname(pickSide === 0 ? f.a : f.b)} {american(f.pick.decimal)}</div>
             : <div className="call no">No bet</div>}
+          {oddsLine(f, home) && <p className="odds-line" style={{ margin: "8px 0 0" }}>{oddsLine(f, home)}</p>}
           <p className="meta" style={{ margin: "6px 0 0" }}>
             {f.pick ? `${f.pick.book} · edge ${pts(f.pick.edge)} · stake up to ${Math.round(f.pick.stake)}. ${SOURCE_TEXT[pickSource ?? ""] ?? ""}`
               : `No price at your books beats our estimate by ${pts(pr?.threshold ?? null)}.`}
@@ -283,6 +341,9 @@ export function FightPage() {
         {pr?.arb && <p className="flag-note">The best prices on each side at different books add up to under 100%: the books disagree (possible arbitrage, often a stale line).</p>}
         {d.notes && d.notes.length > 0 && <ul className="meta" style={{ padding: "0 14px 12px 32px", margin: 0 }}>{d.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
       </section>
+
+      <h3>Your notes</h3>
+      <section className="sheet">{[f.a, f.b].map((n) => <FighterNotes key={n} name={n} />)}</section>
 
       <h3>Check a {home} price</h3>
       <section className="sheet"><PriceCheck f={f} home={home} tuning={settings.data?.tuning} /></section>

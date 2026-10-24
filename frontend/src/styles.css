@@ -107,6 +107,7 @@ p { margin: 0 0 8px; }
 .verdict { padding: 16px 14px 4px; }
 .verdict .call { font: 600 var(--t-2xl)/1 "IBM Plex Sans Condensed", sans-serif; letter-spacing: -0.02em; }
 .verdict .call.no { color: var(--ink-2); }
+.verdict .odds-line { font-size: var(--t-md); line-height: 1.45; text-wrap: pretty; }
 .verdict .call.yes { color: var(--red-ink); }
 .sides2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 14px 14px; }
 .sides2 .who { font: 600 var(--t-sm)/1.2 "IBM Plex Sans Condensed", sans-serif; text-transform: uppercase; color: var(--ink-2); }
