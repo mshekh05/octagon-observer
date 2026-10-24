@@ -14,13 +14,16 @@ export function LivePicker() {
   if (error) return <main><h1>Live</h1><ErrorNote error={error} /></main>;
   if (!event.data) return <main><h1>Live</h1><Loading /></main>;
   const fights = [...event.data.fights].sort((x, y) => y.order - x.order); // card runs bottom-up
-  const live = fights.filter((f) => f.status === "live");
+  // the fight on now is the latest live one; earlier live fights are over and waiting for Kalshi to settle them
+  const started = fights.filter((f) => f.status === "live");
+  const live = started.slice(-1);
+  const waiting = started.slice(0, -1);
   const next = fights.filter((f) => f.status === "scheduled");
   return (
     <main>
       <h1>Live</h1>
       <p className="meta">Pick the fight on screen and score each round as it ends.</p>
-      {[["On now", live], ["Up next", next.slice(0, 4)]].map(([label, list]) => (list as typeof fights).length > 0 && (
+      {[["On now", live], ["Up next", next.slice(0, 4)], ["Waiting for result", waiting]].map(([label, list]) => (list as typeof fights).length > 0 && (
         <section key={label as string} className="sheet" style={{ marginTop: 16 }}>
           <div className="sheet-head"><h2>{label as string}</h2></div>
           <ul className="list">

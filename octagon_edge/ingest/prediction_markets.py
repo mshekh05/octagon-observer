@@ -225,6 +225,41 @@ def fetch_kalshi_props(card: Card, http: httpx.Client) -> dict[str, dict]:
     return parse_kalshi_props(fights, props, card)
 
 
+def parse_kalshi_results(fight_markets: list[dict], method_markets: list[dict], card: Card) -> dict[str, dict]:
+    """fight key -> {"winner": 0 | 1 | None, "method": "KO" | "SUB" | "DEC" | None} for settled fights.
+
+    Kalshi settles a fight's winner and method markets minutes after the result, so this is
+    the quickest free signal that a fight is over. winner None means draw / no contest.
+    """
+    code_to_fight, out = {}, {}
+    for m in fight_markets:
+        who = m.get("yes_sub_title") or ""
+        f = next((f for f in card.fights if who and f.side_of(who) is not None), None)
+        if not f:
+            continue
+        code_to_fight[_event_code(m["event_ticker"])] = f
+        if m.get("result") == "yes":
+            out[f.key] = {"winner": f.side_of(who), "method": None}
+    for m in method_markets:
+        f = code_to_fight.get(_event_code(m["event_ticker"]))
+        if not f or m.get("result") != "yes":
+            continue
+        label = m.get("yes_sub_title") or ""
+        if "draw" in label.lower():
+            out[f.key] = {"winner": None, "method": None}
+        elif f.key in out:
+            out[f.key]["method"] = next((kw for kw, _ in METHODS if kw in label.rpartition(" by ")[2].upper()), None)
+    return out
+
+
+def fetch_kalshi_results(card: Card, http: httpx.Client, since_ts: int) -> dict[str, dict]:
+    """Results of fights whose markets closed since `since_ts` (unix seconds)."""
+    params = {"min_close_ts": since_ts, "limit": 1000}
+    fights = _paged(http, KALSHI_URL, {**params, "series_ticker": KALSHI_SERIES[0]}, "markets")
+    methods = _paged(http, KALSHI_URL, {**params, "series_ticker": KALSHI_PROP_SERIES["method"]}, "markets")
+    return parse_kalshi_results(fights, methods, card)
+
+
 def fetch_polymarket(card: Card, http: httpx.Client) -> dict[str, MarketProb]:
     resp = http.get(POLY_URL, params={"tag_slug": "ufc", "closed": "false", "limit": 200})
     resp.raise_for_status()

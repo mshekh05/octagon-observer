@@ -469,10 +469,14 @@ class PricePoller:
                 _store_kalshi_props(db, ev, pm.fetch_kalshi_props(card, self.http))
             except (httpx.HTTPError, ValueError) as exc:
                 log.warning("Kalshi props unavailable: %s", exc)
+        if any(f.status == "live" for f in ev.fights):
+            self.finish_settled(db, ev, card)
         pms, _ = pm.fetch_all(card, self.http)
         on = pd.Timestamp(ev.date)
         rows: list[AlertRow] = []
         for f in ev.fights:
+            if f.status == "finished":
+                continue
             pred = latest(db, Prediction, f.id)
             if f.id not in self.states:
                 p_model = pred.p_model if pred and pred.p_model is not None else \
@@ -502,6 +506,22 @@ class PricePoller:
                 update_live_estimate(db, f, None, pm_p)
         db.commit()
         return rows
+
+    def finish_settled(self, db: Session, ev: Event, card) -> None:
+        """Mark live fights finished (winner and method) as soon as Kalshi settles them."""
+        since = int(datetime.fromisoformat(ev.date).replace(tzinfo=timezone.utc).timestamp())
+        try:
+            results = pm.fetch_kalshi_results(card, self.http, since)
+        except (httpx.HTTPError, ValueError) as exc:
+            log.warning("Kalshi results unavailable: %s", exc)
+            return
+        for f in ev.fights:
+            r = results.get(f.key)
+            if f.status != "live" or r is None:
+                continue
+            tracking.record_result(db, f, r["winner"], r["method"], source="kalshi")
+            set_status(db, f, "finished", r["winner"])
+            log.info("Finished from Kalshi: %s vs %s, winner %s by %s", f.a, f.b, r["winner"], r["method"])
 
 
 # ---------- live mode ----------

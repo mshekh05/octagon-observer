@@ -63,3 +63,19 @@ def test_kalshi_discovery_falls_back_to_event_search(card, fixture, tmp_path, mo
     out = pm.fetch_kalshi(card, httpx.Client(transport=httpx.MockTransport(handler)))
     assert out["Alexander Volkanovski vs Movsar Evloev"].p_a == pytest.approx(0.5)
     assert "KXUFC333" in (tmp_path / "series.json").read_text()
+
+
+def test_kalshi_results_give_winner_and_method(card):
+    from octagon_edge.ingest.prediction_markets import parse_kalshi_results
+
+    fights = [
+        {"event_ticker": "KXUFCFIGHT-26OCT24LUCCAL", "yes_sub_title": "Jasmin Lucindo", "result": "yes"},
+        {"event_ticker": "KXUFCFIGHT-26OCT24LUCCAL", "yes_sub_title": "Nicolle Caliari", "result": "no"},
+        {"event_ticker": "KXUFCFIGHT-26OCT24OKISAN", "yes_sub_title": "Bolaji Oki", "result": ""},  # still open
+    ]
+    methods = [
+        {"event_ticker": "KXUFCMOV-26OCT24LUCCAL", "yes_sub_title": "Jasmin Lucindo by Decision", "result": "yes"},
+        {"event_ticker": "KXUFCMOV-26OCT24LUCCAL", "yes_sub_title": "Jasmin Lucindo by KO/TKO/DQ", "result": "no"},
+    ]
+    assert parse_kalshi_results(fights, methods, card) == {
+        "Iasmin Lucindo vs Nicolle Caliari": {"winner": 0, "method": "DEC"}}
