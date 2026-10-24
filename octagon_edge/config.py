@@ -53,6 +53,9 @@ class Settings:
     llm_max_adjust: float = 0.0
     max_model_gap: float = 0.25
     youth_adj: float = 0.07
+    home_book: str = "Fanatics"  # the book you bet at; not in the Odds API feed, so it gets "bet at" prices
+    usable_books: tuple[str, ...] = ()  # books you can bet at; empty = all books in the feed
+    totals_every: int = 1800  # seconds between total-rounds fetches on event day (costs an extra credit)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -86,4 +89,7 @@ class Settings:
             llm_max_adjust=min(_f("LLM_MAX_ADJUST", 0.0), 0.03),
             max_model_gap=_f("MAX_MODEL_GAP", 0.25),
             youth_adj=_f("YOUTH_ADJ", 0.07),  # log-odds per 5 years older, from the market backtest
+            home_book=e("HOME_BOOK", "") or "Fanatics",
+            usable_books=tuple(b.strip() for b in e("USABLE_BOOKS", "").split(",") if b.strip()),
+            totals_every=int(_f("TOTALS_EVERY", 1800)),
         )

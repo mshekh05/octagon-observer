@@ -27,6 +27,7 @@ class FightOdds:
     books: dict[str, tuple[float, float]] = field(default_factory=dict)
     commence_time: str = ""
     live: bool = False
+    totals: dict[str, tuple[float, float, float]] = field(default_factory=dict)  # book -> (rounds, over, under)
 
 
 class BudgetExceeded(RuntimeError):
@@ -54,20 +55,21 @@ class OddsApiClient:
         self.budget_file.parent.mkdir(parents=True, exist_ok=True)
         self.budget_file.write_text(json.dumps({"spent": self.spent, "remaining": self.remaining}))
 
-    @property
-    def cost_per_call(self) -> int:
-        return len(self.regions.split(","))  # one market (h2h)
+    def cost_per_call(self, markets: str = "h2h") -> int:
+        return len(self.regions.split(",")) * len(markets.split(","))
 
-    def fetch(self) -> list[dict]:
+    def fetch(self, markets: str = "h2h") -> list[dict]:
+        """markets: "h2h", or "h2h,totals" to add total rounds (one more credit per region)."""
         if not self.api_key:
             raise RuntimeError("ODDS_API_KEY not set")
-        if self.spent + self.cost_per_call > self.budget:
+        cost = self.cost_per_call(markets)
+        if self.spent + cost > self.budget:
             raise BudgetExceeded(f"Odds API budget {self.budget} reached (spent {self.spent})")
         resp = self.http.get(URL, params={"apiKey": self.api_key, "regions": self.regions,
-                                          "markets": "h2h", "oddsFormat": "american"})
+                                          "markets": markets, "oddsFormat": "american"})
         resp.raise_for_status()
         used_now = resp.headers.get("x-requests-last")
-        self.spent += int(used_now) if used_now else self.cost_per_call
+        self.spent += int(used_now) if used_now else cost
         rem = resp.headers.get("x-requests-remaining")
         self.remaining = int(float(rem)) if rem else None
         self._save_spent()
@@ -88,7 +90,15 @@ def parse(events: list[dict], card: Card, now_iso: str | None = None) -> dict[st
         if now_iso and fo.commence_time and fo.commence_time <= now_iso:
             fo.live = True
         for book in ev.get("bookmakers", []):
+            title = book.get("title") or book.get("key")
             for market in book.get("markets", []):
+                if market.get("key") == "totals":
+                    ou = {o.get("name", "").lower(): o for o in market.get("outcomes", [])}
+                    over, under = ou.get("over"), ou.get("under")
+                    if over and under and over.get("point") is not None and over.get("price") and under.get("price"):
+                        fo.totals[title] = (float(over["point"]), american_to_decimal(float(over["price"])),
+                                            american_to_decimal(float(under["price"])))
+                    continue
                 if market.get("key") != "h2h":
                     continue
                 prices: dict[int, float] = {}
@@ -97,7 +107,7 @@ def parse(events: list[dict], card: Card, now_iso: str | None = None) -> dict[st
                     if side is not None and outcome.get("price"):
                         prices[side] = american_to_decimal(float(outcome["price"]))
                 if len(prices) == 2:
-                    fo.books[book.get("title") or book.get("key")] = (prices[0], prices[1])
-        if fo.books:
+                    fo.books[title] = (prices[0], prices[1])
+        if fo.books or fo.totals:
             out[fight.key] = fo
     return out

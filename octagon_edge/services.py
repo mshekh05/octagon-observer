@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -18,7 +19,7 @@ from .alerts import AlertEngine, FightState
 from .analysis import FightAnalysis, analyze_card
 from .config import Settings
 from .db import (AlertRow, Bet, Event, Fight, LiveEstimate, LiveRound, OddsSnapshot, PaperPick, Prediction,
-                 SocialPost, get_setting, latest, utcnow)
+                 PropSnapshot, SocialPost, get_setting, latest, utcnow)
 from .engine import live as L
 from .engine import model as M
 from .engine.odds_math import best_price, consensus_fair_prob
@@ -36,7 +37,23 @@ def effective_settings(db: Session) -> Settings:
     """Environment settings with any overrides saved from the app's Settings screen."""
     base = Settings.from_env()
     overrides = get_setting(db, "tuning", {}) or {}
-    return dataclasses.replace(base, **{k: float(v) for k, v in overrides.items() if k in TUNABLE})
+    s = dataclasses.replace(base, **{k: float(v) for k, v in overrides.items() if k in TUNABLE})
+    books = get_setting(db, "books", {}) or {}
+    if books.get("home"):
+        s = dataclasses.replace(s, home_book=str(books["home"]))
+    if "usable" in books:
+        s = dataclasses.replace(s, usable_books=tuple(books["usable"] or ()))
+    return s
+
+
+def usable(books: dict[str, tuple[float, float]], s: Settings) -> dict[str, tuple[float, float]]:
+    """Only the books you can bet at (all of them when none are chosen)."""
+    return {k: v for k, v in books.items() if not s.usable_books or k in s.usable_books}
+
+
+def db_targets(db: Session) -> dict[str, float]:
+    """Price targets set from the app: fighter name -> decimal price."""
+    return {k: float(v) for k, v in (get_setting(db, "targets", {}) or {}).items()}
 
 
 # ---------- cards ----------
@@ -94,7 +111,7 @@ def _details(fa: FightAnalysis) -> dict:
         "sides": [dataclasses.asdict(s) for s in fa.sides],
         "tone_a": fa.tone_a, "tone_b": fa.tone_b,
         "p_experts": fa.p_experts, "experts_source": fa.experts_source,
-        "blend_inputs": fa.blend_inputs,
+        "blend_inputs": fa.blend_inputs, "pricing": fa.pricing,
     }
 
 
@@ -203,6 +220,80 @@ def _store_posts(db: Session, f: Fight, fa: FightAnalysis) -> None:
                 log.debug("Skipping duplicate social post for %s: %s", name, item.link)
 
 
+# ---------- props ----------
+
+def _store_totals(db: Session, ev: Event, odds: dict) -> None:
+    now = utcnow()
+    for f in ev.fights:
+        fo = odds.get(f.key)
+        for book, (point, over, under) in (fo.totals.items() if fo else ()):
+            db.add(PropSnapshot(fight_id=f.id, ts=now, source="odds_api", market="total_rounds", book=book,
+                                point=point, outcome="over", decimal=over))
+            db.add(PropSnapshot(fight_id=f.id, ts=now, source="odds_api", market="total_rounds", book=book,
+                                point=point, outcome="under", decimal=under))
+
+
+def _store_kalshi_props(db: Session, ev: Event, props: dict[str, dict]) -> None:
+    now = utcnow()
+    for f in ev.fights:
+        fp = props.get(f.key) or {}
+        if fp.get("distance") is not None:
+            db.add(PropSnapshot(fight_id=f.id, ts=now, source="Kalshi", market="distance", outcome="yes",
+                                p=fp["distance"]))
+        for outcome, p in (fp.get("method") or {}).items():
+            db.add(PropSnapshot(fight_id=f.id, ts=now, source="Kalshi", market="method", outcome=outcome, p=p))
+
+
+def _latest_props(db: Session, f: Fight, source: str, market: str) -> list[PropSnapshot]:
+    ts = db.scalar(select(func.max(PropSnapshot.ts)).where(PropSnapshot.fight_id == f.id,
+                                                           PropSnapshot.source == source, PropSnapshot.market == market))
+    if ts is None:
+        return []
+    return list(db.scalars(select(PropSnapshot).where(PropSnapshot.fight_id == f.id, PropSnapshot.source == source,
+                                                      PropSnapshot.market == market, PropSnapshot.ts == ts)))
+
+
+def props_view(db: Session, f: Fight, s: Settings) -> dict:
+    """Prop fair prices (Kalshi) and total-rounds line shopping (sportsbooks) for one fight.
+
+    Totals are judged like the moneyline: each book's over/under is de-vigged, the median
+    across books is the fair chance, and a book's price is flagged when it beats that fair
+    chance by EDGE_PREFIGHT. No model is involved.
+    """
+    out: dict = {"distance": None, "method": [], "totals": [], "threshold": s.edge_prefight, "flags": []}
+    dist = _latest_props(db, f, "Kalshi", "distance")
+    if dist:
+        out["distance"] = {"p": dist[0].p, "ts": dist[0].ts.isoformat()}
+    names = {"a": f.a, "b": f.b}
+    labels = {"ko": "KO/TKO", "sub": "submission", "dec": "decision"}
+    for r in sorted(_latest_props(db, f, "Kalshi", "method"), key=lambda r: r.outcome):
+        label = "Draw / no contest" if r.outcome == "draw" else f"{names[r.outcome[0]]} by {labels[r.outcome[2:]]}"
+        out["method"].append({"outcome": r.outcome, "label": label, "p": r.p})
+
+    rows = _latest_props(db, f, "odds_api", "total_rounds")
+    by_point: dict[float, dict[str, dict[str, float]]] = {}
+    for r in rows:
+        by_point.setdefault(r.point, {}).setdefault(r.book, {})[r.outcome] = r.decimal
+    for point, books in sorted(by_point.items()):
+        pairs = {b: (o["over"], o["under"]) for b, o in books.items() if "over" in o and "under" in o}
+        if not pairs:
+            continue
+        fair_over = consensus_fair_prob(pairs)
+        shop = usable(pairs, s)
+        line = {"point": point, "books": len(pairs), "fair_over": fair_over, "ts": rows[0].ts.isoformat(),
+                "prices": {b: list(v) for b, v in pairs.items()}}
+        for side, name in ((0, "over"), (1, "under")):
+            bp = best_price(shop, side) if shop else None
+            p_side = fair_over if side == 0 else 1 - fair_over
+            line[name] = None if not bp else {"book": bp[0], "decimal": bp[1], "edge": p_side - 1 / bp[1]}
+            # one book can't be judged against itself: flags need at least 3 books for a consensus
+            if bp and len(pairs) >= 3 and p_side - 1 / bp[1] >= s.edge_prefight:
+                out["flags"].append({"point": point, "side": name, "book": bp[0], "decimal": bp[1],
+                                     "edge": p_side - 1 / bp[1]})
+        out["totals"].append(line)
+    return out
+
+
 # ---------- live polling & alerts ----------
 
 class PricePoller:
@@ -215,22 +306,33 @@ class PricePoller:
         self.states: dict[int, FightState] = {}
         self.odds: dict = {}
         self.http = httpx.Client(timeout=15)
+        self.last_totals = 0.0
 
     def poll(self, db: Session, ev: Event, hist, pipe, with_odds: bool, targets: dict[str, float]) -> list[AlertRow]:
         s = effective_settings(db)  # re-read so changes from the Settings screen apply at once
         engine = AlertEngine(s.bankroll, s.kelly_fraction, s.max_stake_pct, s.edge_prefight,
-                             s.edge_live, s.model_weight)
+                             s.edge_live, s.model_weight, usable_books=s.usable_books, home_book=s.home_book)
         engine.sent = self.sent
         card = card_of(ev)
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if with_odds and self.odds_client:
+            # total rounds cost an extra credit per call, so they're fetched less often on event day
+            with_totals = time.time() - self.last_totals >= s.totals_every
             try:
-                self.odds = parse_odds(self.odds_client.fetch(), card, now_iso)
+                self.odds = parse_odds(self.odds_client.fetch("h2h,totals" if with_totals else "h2h"), card, now_iso)
+                if with_totals:
+                    self.last_totals = time.time()
+                    _store_totals(db, ev, self.odds)
             except BudgetExceeded as exc:
                 log.warning("%s - prediction markets only from now on", exc)
                 self.odds_client = None
             except httpx.HTTPError as exc:
                 log.warning("Odds API error: %s", exc)
+        if with_odds:
+            try:
+                _store_kalshi_props(db, ev, pm.fetch_kalshi_props(card, self.http))
+            except (httpx.HTTPError, ValueError) as exc:
+                log.warning("Kalshi props unavailable: %s", exc)
         pms, _ = pm.fetch_all(card, self.http)
         on = pd.Timestamp(ev.date)
         rows: list[AlertRow] = []

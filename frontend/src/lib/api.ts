@@ -79,6 +79,58 @@ export interface FightSummary {
   prediction_ts: string | null;
   prediction_markets: Record<string, { p_a: number; ts: string }>;
   live: { p_live: number; after_round: number; p_rounds: number | null; p_market: number | null } | null;
+  sides?: Side[] | null;
+  pricing?: Pricing | null;
+  prices_ts?: string | null;
+  targets?: [number | null, number | null];
+  prop_flags?: PropFlag[];
+}
+
+/** How the engine priced a fight (Prediction.details.pricing). Index 0 = fighter A. */
+export interface Pricing {
+  p_market: number | null;
+  market_source: string;
+  model_weight: number;
+  youth_delta: number;
+  age_gap: number | null;
+  fair_dec: [number, number];
+  bet_at_dec: [number | null, number | null];
+  threshold: number;
+  home_book: string;
+  arb: boolean;
+}
+
+export interface PropFlag {
+  point: number;
+  side: "over" | "under";
+  book: string;
+  decimal: number;
+  edge: number;
+}
+
+export interface TotalsLine {
+  point: number;
+  books: number;
+  fair_over: number;
+  ts: string;
+  prices: Record<string, [number, number]>;
+  over: { book: string; decimal: number; edge: number } | null;
+  under: { book: string; decimal: number; edge: number } | null;
+}
+
+export interface Props {
+  distance: { p: number; ts: string } | null;
+  method: { outcome: string; label: string; p: number }[];
+  totals: TotalsLine[];
+  threshold: number;
+  flags: PropFlag[];
+}
+
+export interface Books {
+  seen: string[];
+  usable: string[];
+  home: string;
+  home_in_feed: boolean;
 }
 
 export interface EventDetail {
@@ -88,6 +140,7 @@ export interface EventDetail {
   venue: string;
   note: string;
   sources: Record<string, string>;
+  home_book?: string;
   fights: FightSummary[];
 }
 
@@ -230,4 +283,5 @@ export interface SettingsData {
   odds_api: boolean;
   vapid_public_key: string;
   active_card: string;
+  home_book?: string;
 }

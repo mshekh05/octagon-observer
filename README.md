@@ -28,12 +28,20 @@ docker compose run --rm cli doctor
    - Open the address in Chrome on Android, then menu → **Install app**.
    - In the app, open **Settings**, paste `APP_TOKEN`, then tap **Turn on push alerts** and **Send a test alert**.
    - Lock the phone and check the test alert arrives.
-3. **On fight night:**
+3. **Set your books.** In **Settings → Your sportsbooks**, set your main book (default Fanatics) and tick the feed books you can bet at. Picks and "best price" only use those.
+   - **Fanatics isn't in The Odds API feed.** Every fight shows the worst price still worth taking there ("bet ≥ +127"). On the Fight page, **Check a Fanatics price** tells you at once whether a price clears the bar, and what to stake.
+4. **Reading a fight:**
+   - **Card:** each fighter's best price at your books, our fair price and the "bet at" price. Picks say where the edge comes from (line shopping or youth). Fights without a pick show how close they are.
+   - **Fight page:** the verdict first, then how we priced it (market → youth → our price), prices by book, props, price alerts, live scoring, and the tale of the tape (▲ marks the better number).
+   - **Props:** Kalshi "goes the distance" and method of victory as fair prices (no margin), plus total-rounds line shopping across sportsbooks, flagged when one book beats the others' consensus by the edge threshold. Total rounds cost an extra Odds API credit per fetch, so on event day they're fetched every 30 minutes (`TOTALS_EVERY`).
+   - **Price alerts:** set "alert me at +150" on a fighter from the Fight page; a push arrives when a book in the feed reaches it.
+   - **Parlays** (link at the bottom of the Card) are built only from the single-bet picks.
+5. **On fight night:**
    - The worker polls Kalshi and Polymarket every 20 seconds and the Odds API every 4 minutes. Before the event day it checks the Odds API every 3 hours in fight week (most line movement happens then) and every 12 hours before that.
    - Open **Live**, pick the fight on screen, and tap the round box to score each round. A knockdown counts for more.
    - The live probability updates straight away, and alerts arrive as push notifications.
-4. **After a bet:**
-   - Log it from the fight page.
+6. **After a bet:**
+   - Log it from the fight page (the book defaults to your main book).
    - The closing price is captured when the fight starts, and the bet settles when you tap the winner.
    - **Bets** shows profit/loss, ROI and closing-line value (CLV).
    - It also scores every pick and value alert the engine made, bet or not, against the de-vigged closing price ("paper CLV"), split by line shopping vs model.

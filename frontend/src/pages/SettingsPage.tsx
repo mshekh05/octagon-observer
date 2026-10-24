@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, getToken, post, setToken, type SettingsData } from "../lib/api";
+import { api, getToken, post, setToken, type Books, type SettingsData } from "../lib/api";
 import { enablePush, pushState, type PushState } from "../lib/push";
 import { ErrorNote } from "./common";
 
@@ -10,8 +10,47 @@ const FIELDS: [keyof SettingsData["tuning"], string, string, number][] = [
   ["edge_live", "Live edge threshold (%)", "Higher, because live prices move fast", 100],
   ["kelly_fraction", "Kelly fraction (%)", "Share of the full Kelly stake to suggest", 100],
   ["max_stake_pct", "Max stake (% of bankroll)", "Hard cap per bet", 100],
-  ["model_weight", "Stats model weight (%)", "The rest comes from the market, which is usually sharper", 100],
+  ["model_weight", "Stats model weight (%)", "0 = price from the market plus the youth shift; in backtests any model weight made it worse", 100],
 ];
+
+/** Where you bet: your main book (gets "bet at" prices) and which feed books count for picks. */
+function BooksForm() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["books"], queryFn: () => api<Books>("/books"), retry: false });
+  const [home, setHome] = useState<string | null>(null);
+  const [usable, setUsable] = useState<string[] | null>(null);
+  const save = useMutation({
+    mutationFn: () => api<Books>("/books", { method: "PUT", body: JSON.stringify({ home: home ?? q.data?.home, usable: usable ?? q.data?.usable }) }),
+    onSuccess: (d) => { qc.setQueryData(["books"], d); qc.invalidateQueries({ queryKey: ["event"] }); qc.invalidateQueries({ queryKey: ["settings"] }); },
+  });
+  if (!q.data) return null;
+  const chosen = usable ?? q.data.usable;
+  const all = !chosen.length;
+  const toggle = (b: string) => {
+    const base = all ? q.data!.seen : chosen;
+    setUsable(base.includes(b) ? base.filter((x) => x !== b) : [...base, b]);
+  };
+  return (
+    <form className="sheet pad stack" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <label className="field">Your main book
+        <input className="in" value={home ?? q.data.home} onChange={(e) => setHome(e.target.value)} placeholder="Fanatics" />
+        <span className="muted">{q.data.home_in_feed ? "It's in the price feed." : "Not in the price feed (The Odds API doesn't carry it), so each fight shows the worst price still worth taking there, and the Fight page has a price checker."}</span>
+      </label>
+      <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
+        <legend className="meta">Books in the feed you can bet at (picks and best prices only use these)</legend>
+        {q.data.seen.map((b) => (
+          <label key={b} style={{ display: "flex", gap: 10, alignItems: "center", minHeight: 40 }}>
+            <input type="checkbox" checked={all || chosen.includes(b)} onChange={() => toggle(b)} style={{ width: 20, height: 20 }} /> {b}
+          </label>
+        ))}
+        {!q.data.seen.length && <p className="meta" style={{ margin: 0 }}>No books seen yet. They appear after the first price fetch.</p>}
+      </fieldset>
+      <button className="btn block" disabled={save.isPending}>{save.isSuccess ? "Saved" : "Save books"}</button>
+      <p className="meta" style={{ margin: 0 }}>Alerts use the new choice straight away; picks on the card update at the next analysis refresh (every 30 minutes, or "Refresh analysis now" on the Card).</p>
+      {save.error && <p className="error">{(save.error as Error).message}</p>}
+    </form>
+  );
+}
 
 export function SettingsPage() {
   const qc = useQueryClient();
@@ -57,6 +96,9 @@ export function SettingsPage() {
         <button className="btn block" onClick={() => test.mutate()} disabled={test.isPending || !q.data}>Send a test alert</button>
         {test.data && <p className="meta" style={{ margin: 0 }}>Delivered via: {test.data.delivered.join(", ") || "nothing. Check the server's channel settings"}</p>}
       </section>
+
+      <h3>Your sportsbooks</h3>
+      <BooksForm />
 
       <h3>Betting rules</h3>
       {q.data && (

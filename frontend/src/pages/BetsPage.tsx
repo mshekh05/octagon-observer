@@ -29,6 +29,9 @@ export function BetsPage() {
           <tr><td>ROI</td><td>{signed(s.roi)}</td></tr>
           <tr><td>Open</td><td>{s.open}</td></tr>
         </tbody></table>
+        {s.settled > 0 && s.settled < 50 && (
+          <p className="flag-note">{s.settled} settled bet{s.settled === 1 ? "" : "s"}: far too few for profit or ROI to mean anything yet. Watch CLV instead.</p>
+        )}
         <p className="pad meta" style={{ margin: 0 }}>Closing-line value tells you more than P&amp;L over a few events: beating the closing price consistently is the sign of a real edge.</p>
       </section>
 

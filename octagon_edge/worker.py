@@ -90,7 +90,8 @@ class Worker:
                 self.last_odds = time.time()
             if not in_window and not with_odds:
                 return  # outside event day, prediction markets move slowly - poll with the odds cadence
-            rows = self.poller.poll(db, ev, self.hist, self.pipe, with_odds, load_targets(self.targets_path))
+            targets = {**load_targets(self.targets_path), **S.db_targets(db)}  # the app's targets win
+            rows = self.poller.poll(db, ev, self.hist, self.pipe, with_odds, targets)
             for r in rows:
                 log.info("ALERT %s", r.title)
 

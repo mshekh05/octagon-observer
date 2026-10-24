@@ -70,6 +70,7 @@ class FightAnalysis:
     p_experts: float | None = None
     experts_source: str = ""
     blend_inputs: dict = field(default_factory=dict)  # what the alert engine needs to re-blend with fresh prices
+    pricing: dict = field(default_factory=dict)  # how p_final was built, fair and "bet at" prices
 
     def name(self, side: int) -> str:
         return self.fight.a if side == 0 else self.fight.b
@@ -153,15 +154,30 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
                        "age_gap": age_gap, "youth_adj": s.youth_adj}
     fa.p_final = E.final_prob(p_model, p_market, weight, adjust, fa.p_experts, ew,
                               age_gap_years=age_gap, youth_per_5y=s.youth_adj)
+    p_no_youth = E.final_prob(p_model, p_market, weight, adjust, fa.p_experts, ew)
 
     sides = []
-    real_books = {k: v for k, v in books.items() if k != "Reference"}
+    # Prices you can actually take: real books (not press reference odds) you can bet at.
+    real_books = {k: v for k, v in books.items()
+                  if k != "Reference" and (not s.usable_books or k in s.usable_books)}
     threshold = s.edge_prefight * threshold_mult(confidence)
+    if fa.p_final is not None:
+        p = fa.p_final
+        best = [best_price(real_books, i) for i in (0, 1)] if real_books else [None, None]
+        fa.pricing = {
+            "p_market": p_market, "market_source": source, "model_weight": weight,
+            "youth_delta": p - p_no_youth if p_no_youth is not None else 0.0, "age_gap": age_gap,
+            "fair_dec": [1 / p, 1 / (1 - p)],
+            "bet_at_dec": [E.bet_at_decimal(p, threshold), E.bet_at_decimal(1 - p, threshold)],
+            "threshold": threshold, "home_book": s.home_book,
+            # best prices on the two sides at different books that add up to under 100%
+            "arb": bool(best[0] and best[1] and 1 / best[0][1] + 1 / best[1][1] < 1),
+        }
     shrink = E.disagreement_shrink(p_model, p_market) if model_prices else 1.0
     other_source = "model" if model_prices else "youth"  # what moves p_final off the market
     for side in (0, 1):
         p = fa.p_final if side == 0 else 1 - fa.p_final
-        bp = best_price(real_books or books, side)
+        bp = best_price(real_books, side) if real_books else None
         if not bp:
             sides.append(SideVerdict())
             continue
