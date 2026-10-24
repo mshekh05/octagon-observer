@@ -47,6 +47,15 @@ def load_odds_history(hist: History):
     return odds_history.match(hist.rows, odds_history.load(odds_history.download()))
 
 
+def load_expert_history(since: str = "2026-03-01"):
+    """(past SplitPicks consensus, Kalshi closing prices) for finished bouts since `since`."""
+    from .ingest import experts_history, kalshi_history
+
+    fights = greco.load_fights(greco.download())
+    with httpx.Client(timeout=30, follow_redirects=True) as http:
+        return experts_history.load(fights, http, since), kalshi_history.load(fights, http, since)
+
+
 def load_model(hist: History, retrain: bool = False):
     if retrain or not M.MODEL_PATH.exists():
         log.info("Training model on %d fights", len(hist.rows))
@@ -84,12 +93,16 @@ def fetch_sources(card: Card, s: Settings, odds_client: OddsApiClient | None,
         reddit = news_mod.fetch_reddit(names, http)
         status["Reddit"] = f"ok: {len(reddit)} posts" if reddit else "failed or empty (rate-limited?)"
         items += reddit
+    # Fetched for display even at EXPERT_WEIGHT=0; SPLITPICKS_URL=off skips it.
     experts: dict = {}
-    if s.splitpicks_url:
-        try:
-            experts = experts_mod.fetch_consensus(s.splitpicks_url, card, http)
+    try:
+        url = experts_mod.resolve_url(s.splitpicks_url, card, http)
+        if url:
+            experts = experts_mod.fetch_consensus(url, card, http)
             matched = sum(1 for c in experts.values() if c.n)
             status["Expert picks (SplitPicks)"] = f"ok: {matched}/{len(card.fights)} fights, {sum(c.n for c in experts.values())} picks"
-        except httpx.HTTPError as exc:
-            status["Expert picks (SplitPicks)"] = f"failed: {exc}"
+        elif s.splitpicks_url.strip().lower() != "off":
+            status["Expert picks (SplitPicks)"] = "skipped: no Kings Table page for this card (yet)"
+    except httpx.HTTPError as exc:
+        status["Expert picks (SplitPicks)"] = f"failed: {exc}"
     return odds, pms, items, experts, status

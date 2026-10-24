@@ -76,17 +76,22 @@ def _polymarket(card: Card, http: httpx.Client) -> Check:
 
 def _experts(s: Settings, card: Card, http: httpx.Client) -> Check:
     name = "Expert picks (SplitPicks)"
-    if not s.splitpicks_url:
-        return Check(name, WARN, "SPLITPICKS_URL not set - skipped", "Optional: set SPLITPICKS_URL in .env")
+    if s.splitpicks_url.strip().lower() == "off":
+        return Check(name, WARN, "SPLITPICKS_URL=off - skipped", "Optional: shown on the Fight page for reference")
     try:
-        consensus = experts.fetch_consensus(s.splitpicks_url, card, http)
+        url = experts.resolve_url(s.splitpicks_url, card, http)
+        if url is None:
+            return Check(name, WARN, f"no Kings Table page found for {card.event}",
+                         "It usually appears a few days before the event; or set SPLITPICKS_URL to the page")
+        consensus = experts.fetch_consensus(url, card, http)
     except httpx.HTTPError as exc:
         return Check(name, WARN, f"unreachable: {exc}", "Optional source; everything else still works without it")
     matched = sum(1 for c in consensus.values() if c.n)
     if not matched:
         return Check(name, WARN, "0 fights matched - page layout may have changed",
                      "Send the page's HTML to Claude so the parser can be adjusted")
-    return Check(name, PASS, f"{matched}/{len(card.fights)} fights, {sum(c.n for c in consensus.values())} picks")
+    return Check(name, PASS, f"{matched}/{len(card.fights)} fights, {sum(c.n for c in consensus.values())} picks"
+                 f" ({url.rsplit('/', 1)[-1]})")
 
 
 def _news(http: httpx.Client) -> list[Check]:

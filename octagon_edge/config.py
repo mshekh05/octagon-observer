@@ -75,9 +75,12 @@ class Settings:
             max_stake_pct=_f("MAX_STAKE_PCT", 0.03),
             edge_prefight=_f("EDGE_PREFIGHT", 0.04),
             edge_live=_f("EDGE_LIVE", 0.06),
-            model_weight=_f("MODEL_WEIGHT", 0.17),  # from `octagon-edge backtest-market`
-            expert_weight=_f("EXPERT_WEIGHT", 0.15),
-            splitpicks_url=e("SPLITPICKS_URL", "") or "https://splitpicks.com/kings/ufc-333-volkanovski-vs-evloev",
+            # 0: against Kalshi closing prices (backtest-experts) and BestFightOdds lines (backtest-market)
+            # the stats model made the market worse; it is still computed and shown, just not blended in.
+            model_weight=_f("MODEL_WEIGHT", 0.0),
+            # 0 from `octagon-edge backtest-experts`: on 312 fights the consensus only made Kalshi worse
+            expert_weight=_f("EXPERT_WEIGHT", 0.0),
+            splitpicks_url=e("SPLITPICKS_URL", ""),  # blank: find the card's page on splitpicks.com/kings
             # Short-notice and missed-weight news is already in the price, so the LLM's
             # news nudge is off unless you opt in (max 0.03).
             llm_max_adjust=min(_f("LLM_MAX_ADJUST", 0.0), 0.03),

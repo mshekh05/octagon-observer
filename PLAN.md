@@ -374,10 +374,61 @@ All steps were implemented and tested (52 tests pass; the frontend type-checks a
 - Method props at the historical price: "favourite wins by decision" ≈ break-even (−0.6%); every other prop loses 9–48% (heavy margin, worst on submissions and underdogs). No prop edge.
 - Home crowd: not testable — the odds data has the event country but not fighters' nationalities.
 
+### Expert backtest (24 Oct 2026, branch `expert-backtest`)
+Data:
+- Past SplitPicks Kings Tables for 27 finished events (Apr 4 – Oct 17 2026), parsed with the app's own parser: 312 bouts and 4,281 picks with a Kalshi price.
+- Kalshi closing prices from the public API: settled markets from `/markets` and, for markets settled before 25 Aug, `/historical/markets`. The price used is the bid/ask mid of the last hourly candle at least 10 minutes before the fight.
+- Caveat: each handicapper's weight uses the YTD record printed on the page now, which can carry a little hindsight. That would favour the experts, and they still lose.
+
+| Who picks the winner | Hit rate |
+|---|---|
+| Kalshi favourite | 74.2% |
+| Expert consensus | 67.4% |
+| Stats model | 62.6% |
+| Experts, on the 45 fights where they disagree with Kalshi | 26.7% |
+
+| Engine with EXPERT_WEIGHT | Log loss (vs none, thousandths, 90% CI by event) |
+|---|---|
+| 0 | 0.5344 |
+| 0.05 | +0.7 (−0.5 to +1.9) |
+| 0.15 (old default) | +2.9 (−0.7 to +6.4) |
+| 0.30 | +8.0 (+0.8 to +14.9) |
+| 0.50 | +18.8 (+7.0 to +30.6) |
+
+- Leave-one-event-out cross-validation picked 0 for every event, so `EXPERT_WEIGHT` is now 0.
+- The picks are still fetched and shown (a "Handicappers" row on the Fight page and in the report), labelled as a pick share outside the blend.
+- `SPLITPICKS_URL` blank now finds the active card's page from https://splitpicks.com/kings (exact slug, else the main-event surnames); `off` disables it.
+
+**Also found — the stats model against Kalshi closing prices** (same 312 bouts, model out of sample):
+
+| vs Kalshi alone (thousandths of log loss, 90% CI by event) | |
+|---|---|
+| Market + youth | **−2.9** (−5.3 to −0.5): youth confirmed on new data |
+| Market + model at 0.17 | **+7.1** (+1.8 to +12.2): the model hurts |
+| Market + model 0.17 + youth (current engine) | +4.5 (−1.6 to +9.8) |
+| Market + model at 0.10 | +3.7 (+0.6 to +6.7) |
+
+This agrees with the larger 2021+ backtest, where the 0.17 blend *without* youth was already slightly worse than the market alone (0.5940 vs 0.5936). Kalshi closing prices are sharper than the BestFightOdds lines used there.
+
+**Decision: `MODEL_WEIGHT` = 0** (agreed with the owner, 24 Oct 2026).
+
+| Engine formula (blend, then youth) | BestFightOdds, 2021+ (log loss) | Kalshi 2026, vs weight 0 (thousandths, 90% CI) |
+|---|---|---|
+| Weight 0 | 0.5923 | — |
+| Weight 0.05 | 0.5922 | +1.8 (+0.2 to +3.2) |
+| Weight 0.10 | 0.5923 | +3.9 (+0.8 to +6.8) |
+| Weight 0.17 | 0.5927 | +7.3 (+2.0 to +12.4) |
+
+- On BestFightOdds lines the weights are tied within 0.0004. Against the sharper Kalshi close, every weight above 0 is measurably worse.
+- With the weight at 0, the stats model is still computed and shown, but the model-only rules switch off: the disagreement stake shrink, and the low-confidence flag for big model/market gaps (the note stays).
+- Edges are labelled "line shopping" or "youth".
+- `backtest-market` now searches the weight with the engine's own formula, tuned before the holdout. It prints the whole grid, and may name 0.05–0.10 there because the BestFightOdds sample can't tell them apart.
+
 **What to do next**
 1. Deploy the branch to the homelab after UFC 333, then run `octagon-edge backtest-market` there.
 2. Let paper CLV build for a few events (~50 picks) before trusting either source of edge.
-3. If line shopping shows positive CLV and model picks don't, raise `EDGE_PREFIGHT` for model-sourced picks or set `MODEL_WEIGHT` lower.
+3. If youth-sourced picks show negative CLV over ~50 picks while line shopping is positive, set `YOUTH_ADJ` lower.
+4. Re-run `backtest-experts` every few months: its Kalshi sample grows with each event.
 
 ## Risks and guardrails
 - **Free live odds are thin.** Kalshi and Polymarket are the near-live signal. Odds API live calls are rationed, and live pricing on US books will lag.

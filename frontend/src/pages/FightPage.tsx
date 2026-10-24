@@ -89,6 +89,10 @@ export function FightPage() {
             {Object.entries(f.prediction_markets).map(([src, v]) => (
               <tr key={src}><td>{src}</td><td>{pct(v.p_a)}</td><td>{pct(1 - v.p_a)}</td></tr>
             ))}
+            {d.p_experts != null && (
+              <tr><td>Handicappers<br /><span className="meta">{d.experts_source} · share picking, not a probability; not in the blend</span></td>
+                <td>{pct(d.p_experts)}</td><td>{pct(1 - d.p_experts)}</td></tr>
+            )}
             <tr><td>Blended</td><td>{pct(f.p_final)}</td><td>{pct(f.p_final == null ? null : 1 - f.p_final)}</td></tr>
             {d.sides && <>
               <tr><td>Best price</td>{d.sides.map((s, i) => <td key={i}>{american(s.decimal)} <span className="meta">{s.book ?? ""}</span></td>)}</tr>

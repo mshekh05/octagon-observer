@@ -114,6 +114,8 @@ export interface FightDetail extends FightSummary {
     books?: Record<string, [number, number]>;
     sides?: Side[];
     sources?: Record<string, string>;
+    p_experts?: number | null;
+    experts_source?: string;
   };
 }
 
