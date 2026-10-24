@@ -31,6 +31,11 @@ def main(argv: list[str] | None = None) -> None:
     w.add_argument("--targets", type=Path, help='JSON of price targets, e.g. {"Movsar Evloev": "+120"}')
     w.add_argument("--once", action="store_true", help="single polling pass (for testing)")
 
+    bm = sub.add_parser("backtest-market",
+                        help="Compare the stats model with historical betting prices and suggest MODEL_WEIGHT")
+    bm.add_argument("--start-year", type=int, default=2014)
+    bm.add_argument("--holdout-from", default="2021-01-01")
+
     sub.add_parser("test-alert", help="Send a test notification to every configured channel")
 
     dr = sub.add_parser("doctor", help="Check every key and data source and explain fixes")
@@ -74,6 +79,15 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "backtest":
         hist = load_history()
         print(M.backtest(hist.rows, args.split).summary())
+        return
+
+    if args.cmd == "backtest-market":
+        from .engine import market_backtest as MB
+        from .pipeline import load_odds_history
+
+        hist = load_history()
+        print(MB.run(hist.rows, load_odds_history(hist), s.model_weight, args.start_year,
+                     args.holdout_from, youth_adj=s.youth_adj).summary())
         return
 
     card = load_card(args.card)

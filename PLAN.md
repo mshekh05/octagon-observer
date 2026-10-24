@@ -205,6 +205,180 @@ Keep it lean: a Python package plus a script, with no frontend yet.
 - hyperframes 9:16 pre-fight preview and post-event recap clips: a worker job renders them and the Fight page plays them.
 - A bet tracker report on CLV.
 
+---
+
+## Engine review and upgrade plan (23 Oct 2026)
+
+A review of the reasoning engine, the fighter stats it uses, and published UFC betting research. The numbers below come from running the current model on the Greco data (8,792 fights; trained on 2005–2022, tested on 1,587 fights since 2023 where both fighters had UFC history).
+
+### Where the engine stands
+- **The build is careful.** Features only use earlier fights, small samples are shrunk to league averages, the model is symmetric, de-vig uses the power method, model and market blend in log-odds, and stakes are ¼ Kelly with a 3% cap.
+- **The stats model is decent but unproven against the market.** Test log loss 0.639, accuracy 64.8% (Elo alone: 0.682, 55.6%; coin flip: 0.693). Phase 2 said "only bet on the model if it beats the market's de-vigged closing line in the backtest" — that backtest was never built, so `MODEL_WEIGHT=0.35` is a guess.
+- **The local LLM is not in use.** `LLM_PROVIDER` defaults to `none`. Even when set to `ollama`, the default `OLLAMA_URL` (`localhost`) points inside the Docker container, not at the GPU guest (101, .196), and the default model `qwen2.5:14b` isn't the one pulled there (`gemma4:12b`). When on, it only writes text and nudges the probability by ±3 points every 6 hours.
+- **Bugs found:**
+  1. Expert pick *share* is treated as a win probability ([experts.py:84](octagon_edge/ingest/experts.py), blended at [analysis.py:136](octagon_edge/analysis.py)). A unanimous 10/10 panel gives `p_a = 1.0`, which at 15% weight lifts a 75% favourite to about 95% and creates fake value on heavy favourites.
+  2. Pre-fight push alerts use a different probability from the app ([alerts.py:118](octagon_edge/alerts.py)): no expert picks, no LLM nudge, no half weight or higher threshold for fighters with no UFC fights.
+  3. The live model was trained with the stats-only pre-fight probability but is fed the market-blended `p_final` ([services.py:264](octagon_edge/services.py)), which is sharper than what it learned from.
+
+### Fighter stats review
+Measured on the 2023+ test set. "Drop-one" is how much worse log loss gets without the stat (in thousandths; positive = the stat helps on unseen fights).
+
+| Stat | Drop-one | Verdict |
+|---|---|---|
+| Age difference | **+12.0** | By far the strongest stat. Elo + age alone gets most of the model's skill (0.682 → 0.652). A fighter 6+ years older won only 28% of test fights. Research also says bookmakers under-price youth, so this is the most likely source of a real edge. |
+| Strikes absorbed / min (SApM) | +4.1 | Keep. Strong. |
+| Elo | +3.9 | Keep, but weak on its own (see below). |
+| Strikes landed / min (SLpM) | +1.9 | Keep. |
+| Takedowns / 15 min | +1.4 | Keep. |
+| Win rate, takedown defence | +1.0 each | Keep. |
+| Got-finished rate, layoff | +0.7 each | Keep (a "chin" and ring-rust proxy). |
+| Striking accuracy, UFC fights, streak, knockdowns, sub attempts, last 3, height | 0 to +0.3 | Noise. Candidates to drop. |
+| KO-win rate, sub-win rate, control share | about 0 | Noise. Drop. |
+| Reach, striking defence, takedown accuracy | **−0.8 to −1.3** | Hurt on unseen fights (they overlap with SApM and takedowns). Drop. |
+
+Other findings:
+- **A lean 8-stat model is as good or better:** Elo, age, SApM, SLpM, takedown defence, takedowns/15, got-finished rate, layoff (log loss 0.637 vs 0.639 with all 22). Fewer stats means less noise and easier explanations.
+- **The model is too timid on recent fights.** Calibration slope on the test set is 1.22 (1.0 is right). When it says 57.5%, the favourite won 63%; at 62.4%, they won 67%. Regularisation isn't the cause (changing `C` does nothing); recent fights are more predictable than the 2005–2015 ones it mostly learned from. A timid model blended with the market drags favourites toward 50% and creates **fake value on underdogs**.
+- **Elo is weak** (0.682 alone) because every newcomer starts at 1500 and the data has no pre-UFC record. Split decisions count as full wins.
+- **Missing bio data is rare** (2–3% for age, reach, height), so the "missing = equal" fill is fine.
+- **Women's fights are more predictable** (log loss 0.606 vs 0.645 for men), consistent with research that favourites in women's fights are under-priced.
+- **47.5% of fights go to decision**, so what judges reward (output, control, close rounds) matters as much as finishing ability.
+
+Data in the Greco CSVs that the model doesn't use yet:
+- strike targets and positions: `HEAD`, `BODY`, `LEG`, `DISTANCE`, `CLINCH`, `GROUND`
+- `REV.` (reversals) and `TOTAL STR.`
+- `DETAILS` (judges' scorecards, so split vs unanimous decisions), `REFEREE`
+- `STANCE` and `WEIGHT` (loaded but unused)
+
+### What the betting research says
+- **UFC odds are close to efficient.** No reliable favourite-longshot bias. Small effects (youth, travel, favourites in women's fights) mostly fade out of sample. ([Miller & Nichols 2026](https://ideas.repec.org/a/spr/jecfin/v50y2026i1d10.1007_s12197-026-09757-x.html))
+- **The best academic UFC model matched the bookmakers** and showed some positive returns. It simulates fights from in-fight stats. ([Holmes, McHale & Żychaluk 2023](https://www.sciencedirect.com/science/article/pii/S0169207022000073))
+- **News is already priced.** Late replacements won 36.2% against 35.3% implied ([Action Network](https://www.actionnetwork.com/mma/ufc-vegas-74-odds-picks-best-bets-kai-kara-france-amir-albazisaturday-june-3)); missed weight shows no consistent effect ([AgentMMA](https://agentmma.com/mma-lab/ufc-missed-weight-win-rate)).
+- **Bet smaller when probabilities are estimates** ([Baker & McHale 2013](https://ideas.repec.org/a/inm/ordeca/v10y2013i3p189-199.html)).
+- **Lines move about 2.8 points**, mostly 1–7 days out, and favourites shorten toward the close ([betbetter](https://betbetter.world/studies/line-movement)).
+- **Home crowds sway judges slightly:** about +3.6 points per judged round with fans present ([summary of Holmes's thesis](https://agentmma.com/mma-lab/ufc-hometown-judging-bias)).
+- **Props may be softer** because they're thinner, but no data shows it.
+
+### Upgrade plan
+
+**Step 0 — before UFC 333 (config only, no code)**
+- Set `EXPERT_WEIGHT=0` until bug 1 is fixed.
+- Lower `MODEL_WEIGHT` (no backtest supports 0.35) and treat model-driven edges as unproven; prefer edges where one book beats the consensus.
+- Log every bet so CLV starts accumulating.
+
+**Step 1 — bug fixes**
+- Expert picks: cap the pick share (for example to 0.2–0.8) or turn it into a small log-odds nudge, and skip it for unanimous panels.
+- Alerts: make `AlertEngine` use the stored `p_final` and confidence gate from the latest `Prediction`, so the phone and the app agree.
+- Live model: train it on the same kind of pre-fight probability it is fed (the blended one), or feed it the stats-only one.
+- LLM: if you want the local model, set `LLM_PROVIDER=ollama`, `OLLAMA_URL=http://<gpu guest IP>:11434` (or route through LiteLLM on core), `OLLAMA_MODEL=gemma4:12b`, then run `octagon-edge doctor`.
+- Done when: tests cover a unanimous panel, alert/app parity, and `doctor` passes the LLM check.
+
+**Step 2 — backtest against the market (the most important step)**
+- Data: the [Ultimate UFC Dataset](https://baselight.app/u/kaggle/dataset/mdabbert_ultimate_ufc_dataset) (ufcstats + BestFightOdds lines). Match fights by date and fighter names (`ingest/names.py`).
+- Measure on held-out events: log loss and Brier for model, de-vigged closing market, and blend.
+- Fit the outcome on `logit(model)` and `logit(market)` together; the fitted weights become `MODEL_WEIGHT`. If the model's weight is near zero, it has no edge and should only explain, not price.
+- Simulate the bet rule (edge threshold, stake) at closing and opening prices, and report ROI with confidence intervals.
+- Done when: a `octagon-edge backtest-market` command prints these, and `MODEL_WEIGHT` is set from it.
+
+**Step 3 — stats model upgrades** (keep a change only if it lowers held-out log loss *and* doesn't hurt the market backtest)
+- Switch to the lean 8-stat set; drop reach, striking defence, takedown accuracy, KO/sub-win rates and control share.
+- Fix the timidity: weight recent fights more in training (time-decay sample weights), or calibrate on the most recent 2 years.
+- Candidates to test, in order of expected value:
+  1. **Recency-weighted stats** (exponential decay instead of career totals) — career totals hide decline, which age shows is the biggest signal.
+  2. **Age curve by weight class** (non-linear age, for example age² or over-35 flag; lighter classes decline earlier).
+  3. **Opponent-adjusted stats** (strikes landed vs what that opponent usually absorbs) and **strength of schedule** (average opponent Elo).
+  4. **Damage taken**: knockdowns absorbed per 15 min and head strikes absorbed (from `HEAD`).
+  5. **Better Elo**: tune K, give split decisions partial credit (from `DETAILS`), carry Elo across weight-class moves.
+  6. **Position mix**: share of strikes at distance / clinch / ground.
+  7. **Five-round cardio**: output in round 3 vs round 1.
+  8. **Stance matchup** (southpaw vs orthodox) and **weight-class move** (up or down since last fight).
+- Done when: each candidate has a recorded drop-one result in this table.
+
+**Step 4 — decision rules**
+- Anchor on the market: line-shopping edges (best price beats the de-vigged consensus) need no model.
+- Treat model-vs-market gaps over about 10 points as a warning, not value: cap or skip them.
+- Shrink stakes when the model disagrees strongly with the market (Baker & McHale).
+- Use an EV threshold instead of a flat 4 points, so longshots and favourites get comparable bars.
+- Set the LLM news nudge to 0, or apply it only when the news is newer than the latest price move.
+- Hide parlays or label them entertainment.
+
+**Step 5 — measurement**
+- Record "paper CLV" for every alert and flagged pick, even unbet ones, against the de-vigged closing consensus (today [services.py:338](octagon_edge/services.py) compares only placed bets to the same book's price).
+- Show CLV by source of edge (line-shopping vs model) on the Bets screen.
+- Done when: after ~50 picks you can see which source beats the close.
+
+**Step 6 — timing**
+- Alert on opening lines early in fight week, not only on event day; take favourite edges early since favourites tend to shorten.
+
+**Step 7 — low-evidence experiments** (only with Step 2 in place)
+- Favourites in women's fights; home crowd in close decision fights; method-of-victory and "goes the distance" props using the finish-rate stats.
+
+### Results (24 Oct 2026, branch `engine-upgrade`)
+All steps were implemented and tested (52 tests pass; the frontend type-checks and builds). Historical prices: 5,563 UFC fights from 2014–2026 matched from the [ultimate_ufc_dataset](https://github.com/shortlikeafox/ultimate_ufc_dataset) (Apache-2.0, BestFightOdds lines; one price per fighter, timing not documented). The stats model is always scored out of sample (walk-forward, retrained each year).
+
+**Step 0.** `MODEL_WEIGHT` default is now 0.17 (from the backtest). The expert bug is fixed, so `EXPERT_WEIGHT` can stay at 0.15. If the app's Settings screen saved a `model_weight` override, it still wins over the default: set it to 0.17 there.
+
+**Step 1 — done.**
+- Expert pick share is clamped to 25–75% before blending (`engine/edge.py: pick_share_prob`), so a unanimous panel on a 75% favourite changes nothing.
+- One blend function (`final_prob`) is used by the analysis, the app's alert poller and the CLI watcher; alerts read the stored blend inputs (weight, gate, experts, LLM, youth) from the latest prediction.
+- The live model now adds round evidence on top of the blended prior (`LiveModel.predict_from_prior`). On 2,786 rounds since 2023 with a market prior, log loss after round 1: 0.549 (new) vs 0.558 (old) vs 0.591 (market only); round 2 about equal; round 3 0.423 vs 0.419. The old method shrank the prior to 61% of its strength.
+- Ollama default model is `gemma4:12b`; `.env.example` and `doctor` explain that `localhost` inside Docker is the container.
+
+**Step 2 — done.** `octagon-edge backtest-market`:
+
+| On 2021+ fights (2,371) | Log loss | Accuracy |
+|---|---|---|
+| Market alone (de-vigged) | 0.5936 | 68.0% |
+| Old engine: blend at 0.35 | 0.5979 | 69.0% |
+| New engine: blend at 0.17 + youth | **0.5927** | 68.8% |
+
+- The stats model alone (0.655 over all years) is far behind the market (0.608). The old 0.35 weight made the engine *worse* than the market.
+- Simulated flat bets at the historical price: no rule is significantly profitable. The old setting (weight 0.35, edge ≥ 2%) lost 8.3% (90% CI −15.8% to −0.6%). The new engine at edge ≥ 4% made +11.9% on 69 bets, but the 90% CI is −11.8% to +35.2%: unproven.
+
+**Step 3 — done.** Candidates, each added to a lean 8-stat base (test log loss on 2023+ fights; lower is better; base 0.6374):
+
+| Candidate | Test log loss | Kept? |
+|---|---|---|
+| Opponent-adjusted strikes landed / absorbed | **0.6308** | Yes |
+| Strength of schedule (avg opponent Elo) | **0.6338** | Yes |
+| Head strikes absorbed / min | 0.6366 | No (tiny) |
+| Recency-weighted strike and takedown rates | 0.6366–0.6369 | No (tiny) |
+| Southpaw / switch stance | 0.6369 | No |
+| Age over 32 (non-linear age) | 0.6370 | No |
+| Knockdowns absorbed / 15 min | 0.6379 | No |
+| Distance / ground strike share | 0.6377 | No |
+| Weight-class move | 0.6378 | No |
+| Elo with split decisions as partial wins, single K | 0.6387 | No |
+| Time-decay sample weights (4y, 8y half-life) | 0.6376–0.6379 | No (doesn't fix the timidity either) |
+
+- The lean 8-stat set was as good alone but slightly worse once blended with the market (+0.85 ± 0.52 thousandths), so the final model keeps the original 22 stats and adds the three winners: test log loss 0.6301 (was 0.6386), accuracy 65.9% (was 64.8%).
+- Saved models are now `model-v2.joblib` / `live_model-v2.joblib`, so a homelab with the old files retrains instead of crashing on new columns.
+- Not tested: five-round cardio (needs round-level history in `History`).
+- **On top of the market, no stat change mattered** (all within ±1 thousandth). The market already knows what the stats know — except youth (Step 7).
+
+**Step 4 — done.**
+- Each side shows "edge vs market alone" and whether the pick is **line shopping** or **model**.
+- Model/market gap over 25 points (`MAX_MODEL_GAP`) → low confidence (1.5× threshold) with a note.
+- Stakes shrink with model/market disagreement: ×0.5 at 10 points, ×0.2 at 20 (`disagreement_shrink`).
+- LLM news nudge off by default (`LLM_MAX_ADJUST=0`, max 0.03).
+- Parlays: stake cap is a quarter of a single bet's; the page says they're entertainment.
+- EV threshold instead of flat points: tested, no difference (both noise), so the flat 4 points stays.
+
+**Step 5 — done.** New `paper_pick` table records every pick and value alert once per price, captures the de-vigged closing probability when the fight goes live, settles with the result, and the Bets screen shows CLV, beat-close rate and flat ROI by source.
+
+**Step 6 — done.** Odds API polling: every 3h in the 7 days before the event (`FIGHT_WEEK_ODDS_EVERY`), every 12h before that (was 6h throughout). Pre-fight value alerts on favourites note that the price may not last. About +28 credits per event.
+
+**Step 7 — done.**
+- **Youth is the one real signal.** After the market price, each 5 years older costs −0.10 log-odds (90% CI −0.15 to −0.06); with the stats model also included, −0.07, consistent in 2019/2021/2023 holdouts. Added as `YOUTH_ADJ=0.07`. Betting the younger fighter whenever the gap is ≥ 6 years: +2.8% ROI on 1,719 fights (90% CI −0.7% to +6.3%) — close, not proven.
+- Favourites in women's fights: −3.0% ROI (no edge).
+- Method props at the historical price: "favourite wins by decision" ≈ break-even (−0.6%); every other prop loses 9–48% (heavy margin, worst on submissions and underdogs). No prop edge.
+- Home crowd: not testable — the odds data has the event country but not fighters' nationalities.
+
+**What to do next**
+1. Deploy the branch to the homelab after UFC 333, then run `octagon-edge backtest-market` there.
+2. Let paper CLV build for a few events (~50 picks) before trusting either source of edge.
+3. If line shopping shows positive CLV and model picks don't, raise `EDGE_PREFIGHT` for model-sourced picks or set `MODEL_WEIGHT` lower.
+
 ## Risks and guardrails
 - **Free live odds are thin.** Kalshi and Polymarket are the near-live signal. Odds API live calls are rationed, and live pricing on US books will lag.
 - Scraping is limited to ufcstats and BestFightOdds, with low request rates, caching and a clear User-Agent. Sportsbook sites are not scraped.

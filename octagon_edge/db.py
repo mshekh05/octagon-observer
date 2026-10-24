@@ -139,6 +139,27 @@ class Bet(Base):
     note: Mapped[str] = mapped_column(Text, default="")
 
 
+class PaperPick(Base):
+    """Every pick and value alert the engine made, bet or not, so it can be scored against the close.
+
+    Closing-line value converges in tens of picks where ROI needs hundreds, so this is the
+    quickest way to learn whether the engine finds real value, and which kind ("source").
+    """
+    __tablename__ = "paper_pick"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fight_id: Mapped[int] = mapped_column(ForeignKey("fight.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(default=utcnow)
+    kind: Mapped[str] = mapped_column(String(20))  # pick | alert-pre | alert-live
+    side: Mapped[int] = mapped_column(Integer)
+    book: Mapped[str] = mapped_column(String(60), default="")
+    decimal: Mapped[float] = mapped_column(Float)
+    p_ours: Mapped[float] = mapped_column(Float)
+    p_market: Mapped[float | None] = mapped_column(Float, nullable=True)  # de-vigged, this side, at pick time
+    source: Mapped[str] = mapped_column(String(30), default="")  # line shopping | model | market lag
+    close_fair: Mapped[float | None] = mapped_column(Float, nullable=True)  # de-vigged closing P(this side)
+    result: Mapped[str] = mapped_column(String(8), default="open")  # open | won | lost | void
+
+
 class SocialPost(Base):
     __tablename__ = "social_post"
     __table_args__ = (UniqueConstraint("fighter", "link"),)

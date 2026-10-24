@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -131,6 +132,10 @@ def _alerts(s: Settings, send: bool) -> list[Check]:
     return out
 
 
+def _in_docker() -> bool:
+    return Path("/.dockerenv").exists()
+
+
 def _llm(s: Settings, http: httpx.Client) -> Check:
     if s.llm_provider == "none":
         return Check("LLM analyst", WARN, "disabled (LLM_PROVIDER=none) - reports have no written breakdown",
@@ -139,7 +144,11 @@ def _llm(s: Settings, http: httpx.Client) -> Check:
         try:
             tags = http.get(f"{s.ollama_url}/api/tags").json().get("models", [])
         except (httpx.HTTPError, ValueError) as exc:
-            return Check("LLM analyst (Ollama)", FAIL, f"{s.ollama_url} unreachable: {exc}", "Start Ollama or fix OLLAMA_URL")
+            fix = "Start Ollama or fix OLLAMA_URL"
+            if _in_docker() and any(h in s.ollama_url for h in ("localhost", "127.0.0.1")):
+                fix = ("Inside Docker, localhost is this container: set OLLAMA_URL to the Ollama machine's "
+                       "address, e.g. http://<gpu-host-ip>:11434")
+            return Check("LLM analyst (Ollama)", FAIL, f"{s.ollama_url} unreachable: {exc}", fix)
         names = [t.get("name", "") for t in tags]
         if not any(n.split(":")[0] == s.ollama_model.split(":")[0] for n in names):
             return Check("LLM analyst (Ollama)", FAIL, f"model {s.ollama_model} not pulled (have {names[:5]})",

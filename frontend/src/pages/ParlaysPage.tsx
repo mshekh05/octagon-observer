@@ -47,7 +47,7 @@ export function ParlaysPage() {
   return (
     <main>
       <h1>Parlays</h1>
-      <p className="meta">Built from fights where a sportsbook price already beats our blended estimate on its own. Combining legs multiplies risk along with payout &mdash; these are long shots, not safer bets.</p>
+      <p className="meta">Built from fights where a sportsbook price already beats our blended estimate on its own. Treat these as entertainment: the backtest against historical prices found no proven edge even in single bets, and a parlay multiplies any error in our estimate along with the payout. Suggested stakes are capped at a quarter of the single-bet cap.</p>
       <section className="sheet" aria-labelledby="parlay-h" style={{ marginTop: 16 }}>
         <div className="sheet-head"><h2 id="parlay-h">Ranked by expected value</h2><span className="meta fig">{parlays.data.length}</span></div>
         {parlays.data.length ? (

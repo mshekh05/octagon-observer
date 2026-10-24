@@ -50,6 +50,9 @@ class Settings:
     model_weight: float
     expert_weight: float
     splitpicks_url: str
+    llm_max_adjust: float = 0.0
+    max_model_gap: float = 0.25
+    youth_adj: float = 0.07
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -65,14 +68,19 @@ class Settings:
             telegram_chat_id=e("TELEGRAM_CHAT_ID", ""),
             llm_provider=(e("LLM_PROVIDER", "none") or "none").lower(),
             ollama_url=(e("OLLAMA_URL", "") or "http://localhost:11434").rstrip("/"),
-            ollama_model=e("OLLAMA_MODEL", "") or "qwen2.5:14b",
+            ollama_model=e("OLLAMA_MODEL", "") or "gemma4:12b",
             claude_model=e("CLAUDE_MODEL", "") or "claude-opus-5-5",
             bankroll=_f("BANKROLL", 1000),
             kelly_fraction=_f("KELLY_FRACTION", 0.25),
             max_stake_pct=_f("MAX_STAKE_PCT", 0.03),
             edge_prefight=_f("EDGE_PREFIGHT", 0.04),
             edge_live=_f("EDGE_LIVE", 0.06),
-            model_weight=_f("MODEL_WEIGHT", 0.35),
+            model_weight=_f("MODEL_WEIGHT", 0.17),  # from `octagon-edge backtest-market`
             expert_weight=_f("EXPERT_WEIGHT", 0.15),
             splitpicks_url=e("SPLITPICKS_URL", "") or "https://splitpicks.com/kings/ufc-333-volkanovski-vs-evloev",
+            # Short-notice and missed-weight news is already in the price, so the LLM's
+            # news nudge is off unless you opt in (max 0.03).
+            llm_max_adjust=min(_f("LLM_MAX_ADJUST", 0.0), 0.03),
+            max_model_gap=_f("MAX_MODEL_GAP", 0.25),
+            youth_adj=_f("YOUTH_ADJ", 0.07),  # log-odds per 5 years older, from the market backtest
         )

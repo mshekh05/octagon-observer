@@ -18,10 +18,15 @@ PRIOR = {
 }
 ELO_START = 1500.0
 
+# The last three (opponent-adjusted striking, strength of schedule) were added after tests on
+# fights since 2023 and a walk-forward backtest against historical prices (PLAN.md, "Engine
+# review"). A leaner 9-stat set was as good on its own but slightly worse once blended with
+# the market, so the original stats stay.
 FEATURES = [
     "elo", "n_fights", "win_rate", "streak", "last3", "slpm", "sapm", "str_acc", "str_def",
     "td15", "td_acc", "td_def", "sub15", "kd15", "ctrl_pct", "ko_win_rate", "sub_win_rate",
     "finished_rate", "layoff_days", "age", "reach_in", "height_in",
+    "slpm_adj", "sapm_adj", "sos",
 ]
 
 
@@ -50,6 +55,9 @@ class Career:
     recent: list[float] = field(default_factory=list)
     last_date: pd.Timestamp | None = None
     history: list[dict] = field(default_factory=list)
+    adj_l: float = 0.0  # strikes landed minus what each opponent usually absorbs
+    adj_abs: float = 0.0  # strikes absorbed minus what each opponent usually lands
+    opp_elo_sum: float = 0.0  # opponents' pre-fight Elo, for strength of schedule
 
 
 def _shrink(num: float, den: float, prior: float, prior_den: float) -> float:
@@ -84,6 +92,11 @@ def snapshot(c: Career, bio: dict, on: pd.Timestamp) -> dict:
         "reach_in": bio.get("reach_in", np.nan),
         "height_in": bio.get("height_in", np.nan),
     }
+    # Opponent-adjusted striking: per minute, how much more (or less) a fighter lands and
+    # absorbs than their opponents usually allow and land. Shrunk toward 0 like the raw rates.
+    snap["slpm_adj"] = c.adj_l / (mins + PRIOR_MIN)
+    snap["sapm_adj"] = c.adj_abs / (mins + PRIOR_MIN)
+    snap["sos"] = c.opp_elo_sum / c.fights if c.fights else ELO_START  # average opponent Elo
     return snap
 
 
@@ -95,9 +108,15 @@ def _elo_update(a: Career, b: Career, score_a: float, method: str) -> None:
     b.elo += k(b) * mult * ((1 - score_a) - (1 - exp_a))
 
 
-def _add_stats(c: Career, mine: dict | None, theirs: dict | None, secs: float) -> None:
+def _add_stats(c: Career, mine: dict | None, theirs: dict | None, secs: float,
+               opp: dict | None = None) -> None:
+    """Add one fight's totals; `opp` is the opponent's pre-fight snapshot (for opponent adjustment)."""
     if mine is None or theirs is None:
         return
+    if opp is not None:
+        mins = secs / 60
+        c.adj_l += mine["sig_l"] - opp["sapm"] * mins
+        c.adj_abs += theirs["sig_l"] - opp["slpm"] * mins
     c.stat_sec += secs
     c.sig_l += mine["sig_l"]
     c.sig_a += mine["sig_a"]
@@ -155,10 +174,12 @@ class History:
             tb = tot.get((f.event, f.bout, f.fighter_b))
             ta = ta._asdict() if ta is not None else None
             tb = tb._asdict() if tb is not None else None
-            _add_stats(ca, ta, tb, f.duration_sec)
-            _add_stats(cb, tb, ta, f.duration_sec)
+            _add_stats(ca, ta, tb, f.duration_sec, sb)
+            _add_stats(cb, tb, ta, f.duration_sec, sa)
             if f.result == "NC":
                 continue
+            ca.opp_elo_sum += cb.elo
+            cb.opp_elo_sum += ca.elo
             score_a = {"A": 1.0, "B": 0.0, "D": 0.5}[f.result]
             _elo_update(ca, cb, score_a, f.method)
             won_a = None if f.result == "D" else f.result == "A"
@@ -182,8 +203,9 @@ class History:
         return f"{c.wins}-{c.losses}" + (f"-{draws}" if draws else "") + " (UFC)"
 
 
-def diff_frame(rows: pd.DataFrame) -> pd.DataFrame:
+def diff_frame(rows: pd.DataFrame, features: list[str] | None = None) -> pd.DataFrame:
     """A-minus-B differences for every feature; missing bio values become 0."""
-    out = pd.DataFrame({f"d_{k}": rows[f"a_{k}"] - rows[f"b_{k}"] for k in FEATURES})
-    out["d_layoff_days"] = out["d_layoff_days"].clip(-1500, 1500)
+    out = pd.DataFrame({f"d_{k}": rows[f"a_{k}"] - rows[f"b_{k}"] for k in features or FEATURES})
+    if "d_layoff_days" in out:
+        out["d_layoff_days"] = out["d_layoff_days"].clip(-1500, 1500)
     return out.fillna(0.0)

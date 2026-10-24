@@ -19,7 +19,7 @@ from sklearn.metrics import log_loss
 from ..config import DATA_DIR
 from .edge import logit, sigmoid
 
-LIVE_MODEL_PATH = DATA_DIR / "live_model.joblib"
+LIVE_MODEL_PATH = DATA_DIR / "live_model-v2.joblib"  # trained on model-v2's pre-fight probabilities
 MINIMAL = ["logit_pre", "rw", "rw_x_frac", "kd", "td"]
 FULL = MINIMAL + ["sig10", "ctrl_min"]
 
@@ -106,6 +106,23 @@ class LiveModel:
         f = state_features(p_pre, rounds, scheduled)
         cols, model = (FULL, self.full) if f["_has_sig"] else (MINIMAL, self.minimal)
         return float(model.predict_proba(np.array([[f[c] for c in cols]]))[:, 1][0])
+
+    def round_evidence(self, rounds: list[RoundInput], scheduled: int) -> float:
+        """Log-odds shift from what has happened in the fight, without the pre-fight term."""
+        f = state_features(0.5, rounds, scheduled)  # logit_pre = 0, so only round features contribute
+        cols, model = (FULL, self.full) if f["_has_sig"] else (MINIMAL, self.minimal)
+        return float(model.decision_function(np.array([[f[c] for c in cols]]))[0])
+
+    def predict_from_prior(self, p_prior: float, rounds: list[RoundInput], scheduled: int) -> float:
+        """Live probability starting from any calibrated prior (e.g. the market-blended p_final).
+
+        `predict` learned its weight on `logit_pre` from the stats model alone, which is a
+        weaker prior than the blend; re-using that weight on the blend would distort it.
+        Here the prior is kept as-is and only the round evidence is added on top.
+        """
+        if not rounds:
+            return p_prior
+        return sigmoid(logit(p_prior) + self.round_evidence(rounds, scheduled))
 
 
 def train(df: pd.DataFrame, path=LIVE_MODEL_PATH) -> LiveModel:

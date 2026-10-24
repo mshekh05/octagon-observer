@@ -150,7 +150,8 @@ def parlays(slug: str, legs: str = "2,3", limit: int = 15, db: Session = Depends
             continue
         rows.append({"id": f.id, "a": f.a, "b": f.b, "p_final": pred.p_final, "sides": pred.details.get("sides")})
     sizes = tuple(int(n) for n in legs.split(",") if n.strip())
-    combos = generate_parlays(build_legs(rows), sizes, s.bankroll, s.kelly_fraction, s.max_stake_pct, limit)
+    # A parlay multiplies any error in our estimate, so its stake cap is a quarter of a single bet's.
+    combos = generate_parlays(build_legs(rows), sizes, s.bankroll, s.kelly_fraction, s.max_stake_pct / 4, limit)
     return [{
         "decimal": c.decimal, "american": decimal_to_american(c.decimal),
         "p": c.p, "edge": c.edge, "ev": c.ev, "stake": c.stake, "stake_pct": c.stake_pct,
@@ -348,7 +349,8 @@ def _bet_json(b: Bet, f: Fight) -> dict:
 @app.get("/api/bets", dependencies=[api])
 def bets(db: Session = Depends(get_db)):
     rows = db.scalars(select(Bet).order_by(Bet.id.desc())).all()
-    return {"summary": S.bet_summary(db), "bets": [_bet_json(b, db.get(Fight, b.fight_id)) for b in rows]}
+    return {"summary": S.bet_summary(db), "bets": [_bet_json(b, db.get(Fight, b.fight_id)) for b in rows],
+            "paper": S.paper_summary(db)}
 
 
 @app.post("/api/bets", dependencies=[api])

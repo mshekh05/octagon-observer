@@ -1,7 +1,8 @@
 """Background jobs (APScheduler). Run: python -m octagon_edge.worker
 
 - prices: Kalshi/Polymarket every PM_EVERY seconds on event day, Odds API on a
-  budget (every ODDS_EVERY seconds during the event window, every 6h before it)
+  budget (every ODDS_EVERY seconds during the event window, every 3h in fight week,
+  every 12h before that)
 - analysis: model + market + news + LLM refresh every 30 min (LLM at most every 6h)
 - stats: refresh ufcstats data and retrain both models daily
 """
@@ -26,6 +27,21 @@ from .pipeline import load_history, load_live_model, load_model
 from .watch import load_targets
 
 log = logging.getLogger("octagon_edge.worker")
+
+
+def odds_interval(now: datetime, event_date: str, in_window: bool) -> int:
+    """Seconds between Odds API polls.
+
+    Most line movement happens 1-7 days out and favourites tend to shorten toward the
+    close, so fight week is polled more often (FIGHT_WEEK_ODDS_EVERY, default 3h) to catch
+    value early; before that, twice a day saves credits.
+    """
+    if in_window:
+        return int(os.environ.get("ODDS_EVERY", 240))
+    start = datetime.fromisoformat(event_date).replace(tzinfo=timezone.utc)
+    if start - now <= timedelta(days=7):
+        return int(os.environ.get("FIGHT_WEEK_ODDS_EVERY", 3 * 3600))
+    return 12 * 3600
 
 
 class Worker:
@@ -68,7 +84,7 @@ class Worker:
         with self.Session() as db:
             ev = self._event(db)
             in_window = self.event_window(ev)
-            every = int(os.environ.get("ODDS_EVERY", 240)) if in_window else 6 * 3600
+            every = odds_interval(datetime.now(timezone.utc), ev.date, in_window)
             with_odds = time.time() - self.last_odds >= every
             if with_odds:
                 self.last_odds = time.time()

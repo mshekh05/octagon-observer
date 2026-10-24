@@ -17,11 +17,11 @@ from sqlalchemy.orm import Session
 from .alerts import AlertEngine, FightState
 from .analysis import FightAnalysis, analyze_card
 from .config import Settings
-from .db import (AlertRow, Bet, Event, Fight, LiveEstimate, LiveRound, OddsSnapshot, Prediction, SocialPost,
-                 get_setting, latest, utcnow)
+from .db import (AlertRow, Bet, Event, Fight, LiveEstimate, LiveRound, OddsSnapshot, PaperPick, Prediction,
+                 SocialPost, get_setting, latest, utcnow)
 from .engine import live as L
 from .engine import model as M
-from .engine.odds_math import best_price
+from .engine.odds_math import best_price, consensus_fair_prob
 from .ingest import card as card_mod
 from .ingest import news as news_mod
 from .ingest import prediction_markets as pm
@@ -94,6 +94,7 @@ def _details(fa: FightAnalysis) -> dict:
         "sides": [dataclasses.asdict(s) for s in fa.sides],
         "tone_a": fa.tone_a, "tone_b": fa.tone_b,
         "p_experts": fa.p_experts, "experts_source": fa.experts_source,
+        "blend_inputs": fa.blend_inputs,
     }
 
 
@@ -129,6 +130,10 @@ def refresh_analysis(db: Session, ev: Event, hist, pipe, odds_client: OddsApiCli
                           details={**_details(fa), "sources": status})
         db.add(pred)
         out.append(pred)
+        if sv and f.status == "scheduled":
+            p_side = fa.p_final if fa.pick == 0 else 1 - fa.p_final
+            m_side = None if fa.p_market is None else fa.p_market if fa.pick == 0 else 1 - fa.p_market
+            record_paper_pick(db, f, "pick", fa.pick, sv.book, sv.decimal, p_side, m_side, sv.source)
         _store_snapshots(db, f, odds.get(f.key), pms.get(f.key, []))
         _store_posts(db, f, fa)
     db.commit()
@@ -230,8 +235,13 @@ class PricePoller:
         on = pd.Timestamp(ev.date)
         rows: list[AlertRow] = []
         for f in ev.fights:
+            pred = latest(db, Prediction, f.id)
             if f.id not in self.states:
-                self.states[f.id] = FightState(M.predict(pipe, hist.current(f.a, on), hist.current(f.b, on)), f.a, f.b)
+                p_model = pred.p_model if pred and pred.p_model is not None else \
+                    M.predict(pipe, hist.current(f.a, on), hist.current(f.b, on))
+                self.states[f.id] = FightState(p_model, f.a, f.b)
+            if pred and pred.details:
+                self.states[f.id].apply_blend_inputs(pred.details.get("blend_inputs"))
             fo = self.odds.get(f.key) if with_odds else None
             lst = pms.get(f.key, [])
             _store_snapshots(db, f, fo, lst)
@@ -243,6 +253,8 @@ class PricePoller:
                 row = AlertRow(fight_id=f.id, kind=a.kind, title=a.title, body=a.body, urgent=a.urgent)
                 db.add(row)
                 rows.append(row)
+                if a.kind in ("pre", "live") and a.decimal is not None:
+                    record_paper_pick(db, f, f"alert-{a.kind}", a.side, a.book, a.decimal, a.p, a.p_market, a.source)
                 self.notifier.send(a.title, a.body, urgent=a.urgent,
                                    tags="rotating_light" if a.urgent else "moneybag", path=f"/fight/{f.id}")
             if f.status == "live" and pm_p is not None:
@@ -265,7 +277,8 @@ def update_live_estimate(db: Session, f: Fight, live_model: L.LiveModel | None, 
     rounds = _round_inputs(db, f)
     if live_model is None and L.LIVE_MODEL_PATH.exists():
         live_model = L.load()
-    p_rounds = live_model.predict(p_pre, rounds, f.rounds) if live_model else p_pre
+    # p_pre is the market-blended p_final, so add round evidence to it rather than re-weighting it
+    p_rounds = live_model.predict_from_prior(p_pre, rounds, f.rounds) if live_model else p_pre
     if p_market is None:
         recent = db.scalars(select(OddsSnapshot).where(OddsSnapshot.fight_id == f.id, OddsSnapshot.p_a.is_not(None))
                             .order_by(OddsSnapshot.id.desc()).limit(1)).first()
@@ -298,14 +311,19 @@ def record_round(db: Session, f: Fight, rnd: int, data: L.RoundInput, live_model
 
 # ---------- fight status, closing line, bets ----------
 
-def best_current_price(db: Session, f: Fight, side: int, book: str | None = None) -> float | None:
+def latest_books(db: Session, f: Fight) -> dict[str, tuple[float, float]]:
+    """Sportsbook prices from the most recent Odds API poll for this fight."""
     latest_ts = db.scalar(select(func.max(OddsSnapshot.ts)).where(OddsSnapshot.fight_id == f.id,
                                                                  OddsSnapshot.source == "odds_api"))
     if latest_ts is None:
-        return None
+        return {}
     snaps = db.scalars(select(OddsSnapshot).where(OddsSnapshot.fight_id == f.id, OddsSnapshot.source == "odds_api",
                                                   OddsSnapshot.ts == latest_ts)).all()
-    books = {s.book: (s.dec_a, s.dec_b) for s in snaps}
+    return {s.book: (s.dec_a, s.dec_b) for s in snaps}
+
+
+def best_current_price(db: Session, f: Fight, side: int, book: str | None = None) -> float | None:
+    books = latest_books(db, f)
     if book and book in books:
         return books[book][side]
     bp = best_price(books, side)
@@ -318,12 +336,54 @@ def set_status(db: Session, f: Fight, status: str, winner: int | None = None) ->
         # closing line = last pre-fight price, used for CLV
         for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.closing_decimal.is_(None), Bet.live.is_(False))):
             b.closing_decimal = best_current_price(db, f, b.side, b.book)
+        books = latest_books(db, f)
+        fair = consensus_fair_prob(books) if books else None
+        if fair is not None:
+            for pp in db.scalars(select(PaperPick).where(PaperPick.fight_id == f.id, PaperPick.close_fair.is_(None),
+                                                         PaperPick.kind != "alert-live")):
+                pp.close_fair = fair if pp.side == 0 else 1 - fair
     f.status = status
     if status == "finished":
         f.winner = winner
         for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.result == "open")):
             settle_bet(b, winner)
+        for pp in db.scalars(select(PaperPick).where(PaperPick.fight_id == f.id, PaperPick.result == "open")):
+            pp.result = "void" if winner is None else "won" if winner == pp.side else "lost"
     db.commit()
+
+
+def record_paper_pick(db: Session, f: Fight, kind: str, side: int, book: str, decimal: float, p_ours: float,
+                      p_market: float | None, source: str) -> PaperPick | None:
+    """Store a pick or value alert once per price; the same price seen again on a later poll is skipped."""
+    for pp in db.scalars(select(PaperPick).where(PaperPick.fight_id == f.id, PaperPick.kind == kind,
+                                                 PaperPick.side == side, PaperPick.book == (book or ""))):
+        if abs(pp.decimal - decimal) < 0.01:
+            return None
+    pp = PaperPick(fight_id=f.id, kind=kind, side=side, book=book or "", decimal=decimal, p_ours=p_ours,
+                   p_market=p_market, source=source)
+    db.add(pp)
+    return pp
+
+
+def paper_clv(pp: PaperPick) -> float | None:
+    """Expected return of the pick's price at the de-vigged closing probability (>0 = beat the close)."""
+    return None if pp.close_fair is None else pp.decimal * pp.close_fair - 1
+
+
+def paper_summary(db: Session) -> list[dict]:
+    """Closing-line value and flat-stake results of every paper pick, by where the edge came from."""
+    rows = db.scalars(select(PaperPick)).all()
+    out = []
+    for source in sorted({r.source for r in rows}):
+        group = [r for r in rows if r.source == source]
+        clvs = [c for c in (paper_clv(r) for r in group) if c is not None]
+        settled = [r for r in group if r.result in ("won", "lost")]
+        profit = sum(r.decimal - 1 if r.result == "won" else -1.0 for r in settled)
+        out.append({"source": source, "picks": len(group), "clv_n": len(clvs),
+                    "avg_clv": round(sum(clvs) / len(clvs), 4) if clvs else None,
+                    "beat_close": round(sum(c > 0 for c in clvs) / len(clvs), 3) if clvs else None,
+                    "settled": len(settled), "flat_roi": round(profit / len(settled), 4) if settled else None})
+    return out
 
 
 def settle_bet(b: Bet, winner: int | None) -> None:

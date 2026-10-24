@@ -98,6 +98,8 @@ export interface Side {
   ev: number | null;
   stake: number;
   stake_pct: number;
+  market_edge?: number | null;
+  source?: string;
 }
 
 export interface FightDetail extends FightSummary {
@@ -185,6 +187,16 @@ export interface BetSummary {
   roi: number | null;
   avg_clv: number | null;
   clv_n: number;
+}
+
+export interface PaperRow {
+  source: string;
+  picks: number;
+  clv_n: number;
+  avg_clv: number | null;
+  beat_close: number | null;
+  settled: number;
+  flat_roi: number | null;
 }
 
 export interface ParlayLeg {
