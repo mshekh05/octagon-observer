@@ -17,6 +17,13 @@ class Alert:
     urgent: bool = False
     key: str = ""
     score: float = 0.0
+    # set on value alerts, so they can be recorded as paper picks
+    side: int | None = None
+    book: str = ""
+    decimal: float | None = None
+    p: float | None = None
+    p_market: float | None = None
+    source: str = ""
 
 
 @dataclass
@@ -26,6 +33,26 @@ class FightState:
     b: str
     first_market: float | None = None
     pm_history: list[tuple[float, float]] = field(default_factory=list)  # (ts, p_a)
+    # Blend inputs from the latest analysis, so alerts price a fight the same way the app does.
+    # model_weight None means "use the engine's configured weight".
+    model_weight: float | None = None
+    llm_adjust: float = 0.0
+    p_experts: float | None = None
+    expert_weight: float = 0.0
+    threshold_mult: float = 1.0
+    age_gap: float | None = None  # A's age minus B's
+    youth_adj: float = 0.0
+
+    def apply_blend_inputs(self, inputs: dict | None) -> None:
+        if not inputs:
+            return
+        self.model_weight = inputs.get("model_weight", self.model_weight)
+        self.llm_adjust = inputs.get("llm_adjust", 0.0) or 0.0
+        self.p_experts = inputs.get("p_experts")
+        self.expert_weight = inputs.get("expert_weight", 0.0) or 0.0
+        self.threshold_mult = inputs.get("threshold_mult", 1.0) or 1.0
+        self.age_gap = inputs.get("age_gap")
+        self.youth_adj = inputs.get("youth_adj", 0.0) or 0.0
 
 
 def _am(dec: float) -> str:
@@ -42,11 +69,11 @@ class AlertEngine:
         self.cooldown, self.line_move, self.swing, self.swing_window = cooldown_sec, line_move, swing, swing_window_sec
         self.sent: dict[str, tuple[float, float]] = {}  # key -> (ts, score)
 
-    def _value(self, kind, fight, name, p, book, dec, threshold, why, urgent) -> Alert | None:
+    def _value(self, kind, fight, name, p, book, dec, threshold, why, urgent, shrink=1.0) -> Alert | None:
         e = E.edge(p, dec)
         if e < threshold:
             return None
-        st = E.stake(p, dec, self.bankroll, self.kelly, self.max_pct)
+        st = E.stake(p, dec, self.bankroll, self.kelly, self.max_pct, shrink)
         body = (f"{name} {_am(dec)} at {book}\n"
                 f"Our prob {p * 100:.1f}% vs price {100 / dec:.1f}% → edge {e * 100:+.1f} pts, EV {E.expected_value(p, dec) * 100:+.1f}%\n"
                 f"Stake ≤ {st.amount:,.0f} ({st.fraction * 100:.1f}% bankroll)\n{why}")
@@ -92,11 +119,24 @@ class AlertEngine:
                 a = self._value("live", fight, name, p, book, dec, self.edge_live,
                                 "Book price lags the prediction market.", True)
             else:
-                blended = E.blend(st.p_model, fair, self.model_weight)
+                weight = self.model_weight if st.model_weight is None else st.model_weight
+                blended = E.final_prob(st.p_model, fair, weight, st.llm_adjust, st.p_experts, st.expert_weight,
+                                       age_gap_years=st.age_gap, youth_per_5y=st.youth_adj)
                 p = blended if side == 0 else 1 - blended
-                a = self._value("pre", fight, name, p, book, dec, self.edge_pre,
-                                f"Model {st.p_model * 100 if side == 0 else (1 - st.p_model) * 100:.0f}% blended with market.", False)
+                why = f"Model {st.p_model * 100 if side == 0 else (1 - st.p_model) * 100:.0f}% blended with market."
+                if dec < 2:
+                    why += " Favourites tend to shorten toward the close, so this price may not last."
+                a = self._value("pre", fight, name, p, book, dec, self.edge_pre * st.threshold_mult, why, False,
+                                E.disagreement_shrink(st.p_model, fair))
             if a:
+                ref = pm_p if live else fair
+                a.side, a.book, a.decimal, a.p = side, book, dec, p
+                a.p_market = None if ref is None else ref if side == 0 else 1 - ref
+                if live:
+                    a.source = "market lag"
+                else:
+                    shop = a.p_market is not None and E.edge(a.p_market, dec) >= self.edge_pre * st.threshold_mult
+                    a.source = "line shopping" if shop else "model"
                 out.append(a)
             target = targets.get(name)
             if target and dec >= target:

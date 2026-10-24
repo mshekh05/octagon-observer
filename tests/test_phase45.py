@@ -47,6 +47,17 @@ def test_live_model_moves_with_rounds_and_is_symmetric():
     assert lm.predict(0.42, [], 3) == 0.42
 
 
+def test_predict_from_prior_keeps_the_prior_and_adds_round_evidence():
+    df = pd.concat([L.build_dataset(_fights(), _rounds(), {"u1": 0.6, "u2": 0.5})] * 20, ignore_index=True)
+    lm = L.LiveModel(L._fit(df, L.MINIMAL), L._fit(df, L.FULL))
+    won_r1 = [L.RoundInput(winner=0)]
+    assert lm.predict_from_prior(0.7, [], 3) == 0.7
+    # A 50% prior gets exactly the round evidence; a stronger prior keeps its lead.
+    shift = lm.round_evidence(won_r1, 3)
+    assert lm.predict_from_prior(0.5, won_r1, 3) == pytest.approx(L.sigmoid(shift))
+    assert lm.predict_from_prior(0.7, won_r1, 3) > lm.predict_from_prior(0.5, won_r1, 3) > 0.5
+
+
 def test_blend_with_market():
     assert L.blend_with_market(0.7, None) == 0.7
     assert 0.5 < L.blend_with_market(0.7, 0.5) < 0.6

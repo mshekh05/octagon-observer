@@ -40,6 +40,13 @@ def live_dataset(hist: History, pipe):
     return live.build_dataset(greco.load_fights(src), greco.load_round_stats(src), p_pre)
 
 
+def load_odds_history(hist: History):
+    """Historical moneylines matched to History.rows (see ingest.odds_history)."""
+    from .ingest import odds_history
+
+    return odds_history.match(hist.rows, odds_history.load(odds_history.download()))
+
+
 def load_model(hist: History, retrain: bool = False):
     if retrain or not M.MODEL_PATH.exists():
         log.info("Training model on %d fights", len(hist.rows))

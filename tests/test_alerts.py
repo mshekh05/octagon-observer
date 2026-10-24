@@ -25,6 +25,23 @@ def test_no_value_when_model_agrees_with_market():
     assert engine().evaluate("A vs B", st, {"Book": (dec(-110), dec(-110))}, None, False, {}, now=1) == []
 
 
+def test_alert_uses_the_same_blend_as_the_analysis():
+    from octagon_edge.engine.edge import final_prob
+
+    books = {"Book": (dec(120), dec(-140))}
+    inputs = {"model_weight": 0.175, "llm_adjust": 0.0, "p_experts": 0.2, "expert_weight": 0.15,
+              "threshold_mult": 1.5}
+    st = FightState(p_model=0.70, a="A", b="B")
+    st.apply_blend_inputs(inputs)
+    fair = 0.4545  # roughly the de-vigged +120/-140 price
+    p = final_prob(0.70, fair, 0.175, 0.0, 0.2, 0.15)
+    alerts = [a for a in engine().evaluate("A vs B", st, books, None, False, {}, now=1) if a.kind == "pre"]
+    # With the debut-fighter gate (half weight, 1.5x threshold) and experts against A, there is no A alert,
+    # whereas the plain model-vs-market blend would have fired one (see the first test).
+    assert p - 1 / dec(120) < 0.04 * 1.5
+    assert not [a for a in alerts if a.title.endswith("+120")]
+
+
 def test_live_value_uses_prediction_market():
     st = FightState(p_model=0.5, a="A", b="B")
     alerts = engine().evaluate("A vs B", st, {"Book": (dec(150), dec(-180))}, pm_p=0.55, live=True,

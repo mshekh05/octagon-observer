@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type BetRow, type BetSummary } from "../lib/api";
+import { api, type BetRow, type BetSummary, type PaperRow } from "../lib/api";
 import { american, money, pct } from "../lib/format";
 import { ErrorNote, Loading } from "./common";
 
 export function BetsPage() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["bets"], queryFn: () => api<{ summary: BetSummary; bets: BetRow[] }>("/bets") });
+  const q = useQuery({ queryKey: ["bets"], queryFn: () => api<{ summary: BetSummary; bets: BetRow[]; paper?: PaperRow[] }>("/bets") });
   const patch = useMutation({
     mutationFn: ({ id, result }: { id: number; result: string }) => api(`/bets/${id}`, { method: "PATCH", body: JSON.stringify({ result }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bets"] }),
@@ -13,6 +13,7 @@ export function BetsPage() {
   if (q.error) return <main><h1>Bets</h1><ErrorNote error={q.error} /></main>;
   if (!q.data) return <main><h1>Bets</h1><Loading /></main>;
   const { summary: s, bets } = q.data;
+  const paper = q.data.paper ?? [];
   const signed = (n: number | null) => (n == null ? "–" : `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n * 100).toFixed(1)}%`);
   return (
     <main>
@@ -29,6 +30,22 @@ export function BetsPage() {
           <tr><td>Open</td><td>{s.open}</td></tr>
         </tbody></table>
         <p className="pad meta" style={{ margin: 0 }}>Closing-line value tells you more than P&amp;L over a few events: beating the closing price consistently is the sign of a real edge.</p>
+      </section>
+
+      <h3>Every pick, bet or not</h3>
+      <section className="sheet">
+        {paper.length ? (
+          <table className="fig"><thead><tr><th>Edge from</th><th>Picks</th><th>Avg CLV</th><th>Beat close</th><th>Flat ROI</th></tr></thead>
+            <tbody>{paper.map((r) => (
+              <tr key={r.source}>
+                <td>{r.source}</td><td>{r.picks}</td>
+                <td className={r.avg_clv == null ? "" : r.avg_clv > 0 ? "pos" : "neg"}>{signed(r.avg_clv)}</td>
+                <td>{r.beat_close == null ? "–" : pct(r.beat_close, 0)}</td>
+                <td>{signed(r.flat_roi)} <span className="meta">({r.settled})</span></td>
+              </tr>
+            ))}</tbody></table>
+        ) : <p className="pad meta" style={{ margin: 0 }}>No picks recorded yet.</p>}
+        <p className="pad meta" style={{ margin: 0 }}>Every pick and value alert is scored against the de-vigged closing price. After about 50 picks this shows whether the edge from line shopping or from the model is real.</p>
       </section>
 
       <h3>History</h3>

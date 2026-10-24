@@ -12,6 +12,8 @@ class FakeLive:
         lead = sum(1 if r.winner == 0 else -1 if r.winner == 1 else 0 for r in rounds)
         return min(max(p_pre + 0.15 * lead, 0.01), 0.99)
 
+    predict_from_prior = predict
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):

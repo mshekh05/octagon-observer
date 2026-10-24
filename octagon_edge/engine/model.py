@@ -18,18 +18,19 @@ from sklearn.preprocessing import StandardScaler
 from ..config import DATA_DIR
 from .features import FEATURES, diff_frame
 
-MODEL_PATH = DATA_DIR / "model.joblib"
+# Bump the version when FEATURES change, so a saved model with the old columns is retrained, not loaded.
+MODEL_PATH = DATA_DIR / "model-v2.joblib"
 TRAIN_FROM = pd.Timestamp("2005-01-01")
 
 
-def _mirror(rows: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
-    x = diff_frame(rows)
+def _mirror(rows: pd.DataFrame, cols: list[str] | None = None) -> tuple[pd.DataFrame, np.ndarray]:
+    x = diff_frame(rows, [c.removeprefix("d_") for c in cols] if cols else None)
     y = rows["a_won"].to_numpy()
     return pd.concat([x, -x], ignore_index=True), np.concatenate([y, 1 - y])
 
 
 def _fit(rows: pd.DataFrame, cols: list[str]):
-    x, y = _mirror(rows)
+    x, y = _mirror(rows, cols)
     pipe = make_pipeline(StandardScaler(with_mean=False),
                          LogisticRegression(C=0.3, fit_intercept=False, max_iter=2000))
     pipe.fit(x[cols], y)

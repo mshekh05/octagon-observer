@@ -12,6 +12,7 @@ import httpx
 import pandas as pd
 
 from .alerts import AlertEngine, FightState
+from .analysis import confidence_gate, threshold_mult
 from .config import DATA_DIR, Settings
 from .engine import model as M
 from .engine.odds_math import american_to_decimal
@@ -47,8 +48,14 @@ def run(card: Card, hist, pipe, s: Settings, pm_every: int = 20, odds_every: int
                          s.edge_live, s.model_weight)
     odds_client = OddsApiClient(s.odds_api_key, s.odds_api_regions, s.odds_api_budget) if s.odds_api_key else None
     on = pd.Timestamp(card.date)
-    states = {f.key: FightState(M.predict(pipe, hist.current(f.a, on), hist.current(f.b, on)), f.a, f.b)
-              for f in card.fights}
+    states = {}
+    for f in card.fights:
+        snap_a, snap_b = hist.current(f.a, on), hist.current(f.b, on)
+        _, confidence, weight = confidence_gate(f, snap_a, snap_b, s.model_weight)
+        age_gap = snap_a["age"] - snap_b["age"] if pd.notna(snap_a["age"]) and pd.notna(snap_b["age"]) else None
+        states[f.key] = FightState(M.predict(pipe, snap_a, snap_b), f.a, f.b, model_weight=weight,
+                                   threshold_mult=threshold_mult(confidence), age_gap=age_gap,
+                                   youth_adj=s.youth_adj)
     targets = load_targets(targets_path)
     db = open_db()
     http = httpx.Client(timeout=15)

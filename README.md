@@ -29,13 +29,14 @@ docker compose run --rm cli doctor
    - In the app, open **Settings**, paste `APP_TOKEN`, then tap **Turn on push alerts** and **Send a test alert**.
    - Lock the phone and check the test alert arrives.
 3. **On fight night:**
-   - The worker polls Kalshi and Polymarket every 20 seconds and the Odds API every 4 minutes. Before the event day it slows to every 6 hours.
+   - The worker polls Kalshi and Polymarket every 20 seconds and the Odds API every 4 minutes. Before the event day it checks the Odds API every 3 hours in fight week (most line movement happens then) and every 12 hours before that.
    - Open **Live**, pick the fight on screen, and tap the round box to score each round. A knockdown counts for more.
    - The live probability updates straight away, and alerts arrive as push notifications.
 4. **After a bet:**
    - Log it from the fight page.
    - The closing price is captured when the fight starts, and the bet settles when you tap the winner.
    - **Bets** shows profit/loss, ROI and closing-line value (CLV).
+   - It also scores every pick and value alert the engine made, bet or not, against the de-vigged closing price ("paper CLV"), split by line shopping vs model.
 
 Want to see the app without real data? Seed a demo database. Every price in it is simulated and labelled as such:
 
@@ -83,7 +84,7 @@ docker compose up -d watch
 | `ODDS_API_KEY` | the-odds-api.com, free plan (500 credits a month) | No sportsbook prices, so no value picks. You still get the model, Kalshi/Polymarket and reference odds. |
 | `NTFY_TOPIC` | Install the ntfy Android app and subscribe to a hard-to-guess topic name | Use Telegram, or alerts only print to the console |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Create a bot with @BotFather, message it once, then read `chat.id` from `https://api.telegram.org/bot<TOKEN>/getUpdates` | Use ntfy |
-| `LLM_PROVIDER` | `ollama` (local; set `OLLAMA_URL` and `OLLAMA_MODEL`) or `claude` (needs `ANTHROPIC_API_KEY`) | No written breakdown |
+| `LLM_PROVIDER` | `ollama` (local; set `OLLAMA_URL` and `OLLAMA_MODEL`) or `claude` (needs `ANTHROPIC_API_KEY`). In Docker, `localhost` is the container: point `OLLAMA_URL` at the Ollama machine's address. | No written breakdown |
 
 **Odds API budget.**
 - A call costs 1 credit per region and returns every MMA fight at once.
@@ -100,19 +101,23 @@ docker compose up -d watch
    - takedown rate, accuracy and defence
    - submissions, knockdowns and control time
    - finish rates, age, reach and layoff
-3. **Blend.** The two are combined in log-odds space, weighted 65% market and 35% model (`MODEL_WEIGHT`).
+   - opponent-adjusted striking (landed and absorbed against what each opponent usually allows and lands) and strength of schedule (average opponent Elo)
+3. **Blend.** The two are combined in log-odds space, weighted 83% market and 17% model (`MODEL_WEIGHT`, fitted by `octagon-edge backtest-market`).
    - The model's weight is halved when a fighter has no UFC history.
-   - The LLM may move the result by at most ±3 points, and only for concrete news such as an injury or a missed weight.
+   - A small shift toward the younger fighter (`YOUTH_ADJ`), because bookmakers under-price youth.
+   - Expert picks (`EXPERT_WEIGHT`) are a small nudge; a unanimous panel can't push past 75%.
+   - The LLM news nudge is off by default (`LLM_MAX_ADJUST=0`): short-notice and missed-weight news is already in the price.
 4. **Value.**
-   - Before the fight: an edge of at least 4 points (`EDGE_PREFIGHT`) over the best US price. The threshold is 1.5× higher for low-confidence fights.
+   - Before the fight: an edge of at least 4 points (`EDGE_PREFIGHT`) over the best US price. The threshold is 1.5× higher for low-confidence fights, including when the model and market disagree by more than 25 points (`MAX_MODEL_GAP`).
+   - Each pick says where the edge comes from: **line shopping** (the price beats the market consensus on its own) or **model**.
    - During the fight: the book price lags the Kalshi/Polymarket price by at least 6 points (`EDGE_LIVE`).
-5. **Stake.** A quarter of the Kelly-formula stake, capped at 3% of bankroll (`KELLY_FRACTION`, `MAX_STAKE_PCT`).
+5. **Stake.** A quarter of the Kelly-formula stake, capped at 3% of bankroll (`KELLY_FRACTION`, `MAX_STAKE_PCT`), and shrunk further the more the model and market disagree (half at a 10-point gap).
 
 **Honest numbers.**
-- On 1,587 fights since 2023 that it never saw during training, the stats model scores log loss 0.639 and picks the winner 64.8% of the time.
-- Betting markets usually score about 0.60, so the model alone does **not** beat the market. That is why the blend leans on the market.
-- Treat flagged edges as "worth a closer look", not as guaranteed value.
-- Run `octagon-edge backtest` to reproduce these numbers.
+- On 1,587 fights since 2023 that it never saw during training, the stats model scores log loss 0.630 and picks the winner 65.9% of the time.
+- Against 5,563 fights with a historical price (2014–2026), the de-vigged market scores 0.608 and the stats model 0.655: the model alone does **not** beat the market. Blended at 17% with the youth shift, it scores slightly better than the market alone on 2021+ fights (0.5927 vs 0.5936).
+- No bet rule showed a statistically significant profit in the simulation at historical prices. Treat flagged edges as "worth a closer look", not as guaranteed value, and watch the paper CLV on the **Bets** screen.
+- Run `octagon-edge backtest` and `octagon-edge backtest-market` to reproduce these numbers. The second downloads historical moneylines from the [ultimate_ufc_dataset](https://github.com/shortlikeafox/ultimate_ufc_dataset) (Apache-2.0).
 
 ## Alerts sent by `watch`
 - `VALUE`: a pre-fight price beats the blended probability.

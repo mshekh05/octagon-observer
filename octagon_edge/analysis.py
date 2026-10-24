@@ -21,8 +21,10 @@ from .llm.provider import Analyst
 log = logging.getLogger(__name__)
 
 SHOWN_STATS = [
-    ("elo", "Elo rating", 0), ("n_fights", "UFC fights", 0), ("slpm", "Sig. strikes landed / min", 2),
-    ("sapm", "Sig. strikes absorbed / min", 2), ("str_acc", "Striking accuracy", "%"),
+    ("elo", "Elo rating", 0), ("sos", "Avg opponent Elo", 0), ("n_fights", "UFC fights", 0),
+    ("slpm", "Sig. strikes landed / min", 2), ("slpm_adj", "Landed vs opponents' norm / min", 2),
+    ("sapm", "Sig. strikes absorbed / min", 2), ("sapm_adj", "Absorbed vs opponents' norm / min", 2),
+    ("str_acc", "Striking accuracy", "%"),
     ("str_def", "Striking defence", "%"), ("td15", "Takedowns / 15 min", 2),
     ("td_acc", "Takedown accuracy", "%"), ("td_def", "Takedown defence", "%"),
     ("sub15", "Sub attempts / 15 min", 2), ("ctrl_pct", "Control time share", "%"),
@@ -39,6 +41,8 @@ class SideVerdict:
     ev: float | None = None
     stake: float = 0.0
     stake_pct: float = 0.0
+    market_edge: float | None = None  # edge over the de-vigged consensus alone, no model involved
+    source: str = ""  # "line shopping" when the price beats the market consensus by itself, else "model"
 
 
 @dataclass
@@ -65,6 +69,7 @@ class FightAnalysis:
     llm: dict | None = None
     p_experts: float | None = None
     experts_source: str = ""
+    blend_inputs: dict = field(default_factory=dict)  # what the alert engine needs to re-blend with fresh prices
 
     def name(self, side: int) -> str:
         return self.fight.a if side == 0 else self.fight.b
@@ -82,18 +87,13 @@ def market_prob(fight: Fight, odds: FightOdds | None, pms: list[MarketProb]) -> 
     return None, "no market data", {}
 
 
-def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settings,
-                  odds: FightOdds | None = None, pms: list[MarketProb] | None = None,
-                  news: list[NewsItem] | None = None, analyst: Analyst | None = None,
-                  experts: ExpertConsensus | None = None) -> FightAnalysis:
-    pms = pms or []
-    news = news or []
-    snap_a, snap_b = hist.current(fight.a, on), hist.current(fight.b, on)
-    p_model = M.predict(pipe, snap_a, snap_b)
-    p_market, source, books = market_prob(fight, odds, pms)
+LOW_CONFIDENCE_THRESHOLD_MULT = 1.5
 
+
+def confidence_gate(fight: Fight, snap_a: dict, snap_b: dict, model_weight: float) -> tuple[list[str], str, float]:
+    """(notes, confidence, model weight): the model counts for less when a fighter has no UFC record."""
     notes = []
-    weight = s.model_weight
+    weight = model_weight
     confidence = "normal"
     for name, snap in ((fight.a, snap_a), (fight.b, snap_b)):
         if snap["n_fights"] == 0:
@@ -104,6 +104,33 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
             confidence = "low" if confidence == "low" else "medium"
     if fight.rounds == 5:
         notes.append("Five-round fight: cardio and late-round output matter more than the 3-round averages show.")
+    return notes, confidence, weight
+
+
+def threshold_mult(confidence: str) -> float:
+    return LOW_CONFIDENCE_THRESHOLD_MULT if confidence == "low" else 1.0
+
+
+def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settings,
+                  odds: FightOdds | None = None, pms: list[MarketProb] | None = None,
+                  news: list[NewsItem] | None = None, analyst: Analyst | None = None,
+                  experts: ExpertConsensus | None = None) -> FightAnalysis:
+    """Pre-fight verdict for one fight.
+
+    The market is the anchor: p_final leans mostly on the de-vigged price (MODEL_WEIGHT
+    comes from the market backtest). A pick needs an edge over the best real sportsbook
+    price; stakes shrink when the stats model and the market disagree.
+    """
+    pms = pms or []
+    news = news or []
+    snap_a, snap_b = hist.current(fight.a, on), hist.current(fight.b, on)
+    p_model = M.predict(pipe, snap_a, snap_b)
+    p_market, source, books = market_prob(fight, odds, pms)
+    notes, confidence, weight = confidence_gate(fight, snap_a, snap_b, s.model_weight)
+    if p_model is not None and p_market is not None and abs(p_model - p_market) > s.max_model_gap:
+        notes.append(f"Stats model and market disagree by {abs(p_model - p_market) * 100:.0f} points - usually "
+                     "the model is missing something (injury, level of opposition, pre-UFC record).")
+        confidence = "low"
 
     fa = FightAnalysis(fight, hist.record(fight.a), hist.record(fight.b), snap_a, snap_b,
                        p_model, p_market, source, None, books, pms, confidence=confidence, notes=notes)
@@ -113,15 +140,22 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
     if analyst and analyst.enabled:
         fa.llm = analyst.analyze(llm_context(fa))
     adjust = float(fa.llm.get("news_adjustment_a", 0) or 0) if fa.llm else 0.0
-    fa.p_final = E.blend(p_model, p_market, weight, llm_adjust=adjust)
-
+    adjust = max(-s.llm_max_adjust, min(s.llm_max_adjust, adjust))
+    ew = 0.0
     if experts and experts.p_a is not None and s.expert_weight > 0:
         fa.p_experts, fa.experts_source = experts.p_a, experts.summary
         ew = E.scaled_weight(s.expert_weight, experts.n)
-        fa.p_final = E.blend(fa.p_final, experts.p_a, 1 - ew)
+    age_gap = snap_a["age"] - snap_b["age"] if pd.notna(snap_a["age"]) and pd.notna(snap_b["age"]) else None
+    fa.blend_inputs = {"model_weight": weight, "llm_adjust": adjust, "p_experts": fa.p_experts,
+                       "expert_weight": ew, "threshold_mult": threshold_mult(confidence),
+                       "age_gap": age_gap, "youth_adj": s.youth_adj}
+    fa.p_final = E.final_prob(p_model, p_market, weight, adjust, fa.p_experts, ew,
+                              age_gap_years=age_gap, youth_per_5y=s.youth_adj)
 
     sides = []
     real_books = {k: v for k, v in books.items() if k != "Reference"}
+    threshold = s.edge_prefight * threshold_mult(confidence)
+    shrink = E.disagreement_shrink(p_model, p_market)
     for side in (0, 1):
         p = fa.p_final if side == 0 else 1 - fa.p_final
         bp = best_price(real_books or books, side)
@@ -129,10 +163,11 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
             sides.append(SideVerdict())
             continue
         book, dec = bp
-        st = E.stake(p, dec, s.bankroll, s.kelly_fraction, s.max_stake_pct)
-        sides.append(SideVerdict(book, dec, E.edge(p, dec), E.expected_value(p, dec), st.amount, st.fraction))
+        st = E.stake(p, dec, s.bankroll, s.kelly_fraction, s.max_stake_pct, shrink)
+        m_edge = None if p_market is None else E.edge(p_market if side == 0 else 1 - p_market, dec)
+        sides.append(SideVerdict(book, dec, E.edge(p, dec), E.expected_value(p, dec), st.amount, st.fraction,
+                                 m_edge, "line shopping" if m_edge is not None and m_edge >= threshold else "model"))
     fa.sides = tuple(sides)
-    threshold = s.edge_prefight * (1.5 if confidence == "low" else 1)
     best = max((0, 1), key=lambda i: fa.sides[i].edge if fa.sides[i].edge is not None else -1)
     if fa.sides[best].edge is not None and fa.sides[best].edge >= threshold and real_books:
         fa.pick = best

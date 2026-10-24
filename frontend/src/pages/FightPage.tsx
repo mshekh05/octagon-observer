@@ -8,8 +8,10 @@ import { RoundStrip } from "../components/RoundStrip";
 import { ErrorNote, Loading } from "./common";
 
 const TAPE: [string, string, "pct" | number][] = [
-  ["elo", "Elo rating", 0], ["n_fights", "UFC fights", 0], ["slpm", "Strikes landed / min", 2],
-  ["sapm", "Strikes absorbed / min", 2], ["str_acc", "Striking accuracy", "pct"], ["str_def", "Striking defence", "pct"],
+  ["elo", "Elo rating", 0], ["sos", "Avg opponent Elo", 0], ["n_fights", "UFC fights", 0],
+  ["slpm", "Strikes landed / min", 2], ["slpm_adj", "Landed vs opponents' norm / min", 2],
+  ["sapm", "Strikes absorbed / min", 2], ["sapm_adj", "Absorbed vs opponents' norm / min", 2],
+  ["str_acc", "Striking accuracy", "pct"], ["str_def", "Striking defence", "pct"],
   ["td15", "Takedowns / 15 min", 2], ["td_def", "Takedown defence", "pct"], ["sub15", "Sub attempts / 15 min", 2],
   ["ctrl_pct", "Control time", "pct"], ["kd15", "Knockdowns / 15 min", 2], ["age", "Age", 1], ["reach_in", "Reach (in)", 0],
   ["layoff_days", "Days since last fight", 0],
@@ -91,6 +93,7 @@ export function FightPage() {
             {d.sides && <>
               <tr><td>Best price</td>{d.sides.map((s, i) => <td key={i}>{american(s.decimal)} <span className="meta">{s.book ?? ""}</span></td>)}</tr>
               <tr><td>Edge</td>{d.sides.map((s, i) => <td key={i} className={s.edge == null ? "" : s.edge > 0 ? "pos" : "neg"}>{pts(s.edge)}</td>)}</tr>
+              <tr><td>Edge vs market alone</td>{d.sides.map((s, i) => <td key={i} className={s.market_edge == null ? "" : s.market_edge > 0 ? "pos" : "neg"}>{pts(s.market_edge ?? null)}</td>)}</tr>
             </>}
           </tbody>
         </table>
