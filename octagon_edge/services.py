@@ -491,7 +491,8 @@ class PricePoller:
                 set_status(db, f, "live")
             pm_p = sum(m.p_a for m in lst) / len(lst) if lst else None
             books = (self.odds.get(f.key).books if self.odds.get(f.key) else {})
-            alerts = engine.evaluate(f.key, self.states[f.id], books, pm_p, f.status == "live", targets)
+            alerts = engine.evaluate(f.key, self.states[f.id], books, pm_p, f.status == "live", targets,
+                                     fresh_books=with_odds)
             if with_odds and f.status == "scheduled":
                 alerts += prop_alerts(engine, f, props_view(db, f, s)["flags"])
             for a in alerts:
@@ -500,6 +501,8 @@ class PricePoller:
                 rows.append(row)
                 if a.kind in ("pre", "live") and a.decimal is not None:
                     record_paper_pick(db, f, f"alert-{a.kind}", a.side, a.book, a.decimal, a.p, a.p_market, a.source)
+                if a.kind not in PUSH_KINDS:
+                    continue  # swings and line moves stay in the app feed; phones get bets only
                 self.notifier.send(a.title, a.body, urgent=a.urgent,
                                    tags="rotating_light" if a.urgent else "moneybag", path=f"/fight/{f.id}")
             if f.status == "live" and pm_p is not None:
@@ -522,6 +525,10 @@ class PricePoller:
             tracking.record_result(db, f, r["winner"], r["method"], source="kalshi")
             set_status(db, f, "finished", r["winner"])
             log.info("Finished from Kalshi: %s vs %s, winner %s by %s", f.a, f.b, r["winner"], r["method"])
+
+
+# alert kinds sent to phones (ntfy / web push): something to bet now, or a price you asked for
+PUSH_KINDS = ("pre", "live", "target", "prop")
 
 
 # ---------- live mode ----------

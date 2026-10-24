@@ -88,7 +88,7 @@ def test_worker_event_window(monkeypatch):
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     w = Worker.__new__(Worker)
-    monkeypatch.setenv("EVENT_WINDOW_START_UTC", "0")
+    monkeypatch.setenv("EVENT_WINDOW_START_UTC", str(datetime.now(timezone.utc).hour))  # window open now, at any hour
     assert w.event_window(Ev())
     Ev.date = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d")
     assert not w.event_window(Ev())

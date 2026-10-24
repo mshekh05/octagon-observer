@@ -74,3 +74,28 @@ def test_swing_and_target():
     assert [a for a in swing if a.kind == "swing"]
     hits = e.evaluate("A vs B", st, {"Book": (dec(130), dec(-150))}, None, False, {"A": dec(120)}, now=70)
     assert [a for a in hits if a.kind == "target"]
+
+
+def test_live_noise_is_throttled():
+    from octagon_edge.alerts import AlertEngine, FightState
+
+    e = AlertEngine(1000, 0.25, 0.05, 0.04, 0.06, 0.0)
+    st = FightState(0.5, "A", "B")
+    books = {"Book": (3.0, 1.4)}
+    # live value is only checked against book prices fetched this poll
+    assert not [a for a in e.evaluate("A vs B", st, books, 0.6, True, {}, now=0, fresh_books=False) if a.kind == "live"]
+    assert [a for a in e.evaluate("A vs B", st, books, 0.6, True, {}, now=10) if a.kind == "live"]
+    # a bigger live edge inside the cooldown doesn't re-alert; nor does a growing swing
+    assert not [a for a in e.evaluate("A vs B", st, books, 0.7, True, {}, now=20) if a.kind in ("live", "swing")][1:]
+    assert not [a for a in e.evaluate("A vs B", st, books, 0.8, True, {}, now=30) if a.kind in ("live", "swing")]
+
+
+def test_line_move_rebases_after_alerting():
+    from octagon_edge.alerts import AlertEngine, FightState
+
+    e = AlertEngine(1000, 0.25, 0.05, 0.04, 0.06, 0.0, cooldown_sec=0)
+    st = FightState(0.5, "A", "B")
+    e.evaluate("A vs B", st, {"X": (2.0, 2.0)}, None, False, {}, now=0)
+    moved = {"X": (1.75, 2.25)}  # about 56%
+    assert [a for a in e.evaluate("A vs B", st, moved, None, False, {}, now=10) if a.kind == "move"]
+    assert not [a for a in e.evaluate("A vs B", st, moved, None, False, {}, now=20) if a.kind == "move"]

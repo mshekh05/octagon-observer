@@ -87,7 +87,11 @@ class AlertEngine:
                      key=f"{kind}|{fight}|{name}", score=e)
 
     def evaluate(self, fight: str, st: FightState, books: dict[str, tuple[float, float]],
-                 pm_p: float | None, live: bool, targets: dict[str, float], now: float | None = None) -> list[Alert]:
+                 pm_p: float | None, live: bool, targets: dict[str, float], now: float | None = None,
+                 fresh_books: bool = True) -> list[Alert]:
+        """fresh_books: the book prices were fetched this poll. Live value compares them with the
+        prediction market, which updates every few seconds; against minutes-old book prices that
+        is a stale line, not a bet, so live value is only checked when the books are fresh."""
         now = now or time.time()
         out: list[Alert] = []
         names = (st.a, st.b)
@@ -111,6 +115,7 @@ class AlertEngine:
                 out.append(Alert("move", fight, f"LINE MOVE: {names[side]} steamed",
                                  f"{st.a} fair prob {st.first_market * 100:.0f}% → {fair * 100:.0f}% since watch began.",
                                  False, key=f"move|{fight}|{side}", score=abs(fair - st.first_market)))
+                st.first_market = fair  # next line-move alert only after a further move
 
         # the consensus above uses every book; prices to bet come only from books you can use
         shop_books = {k: v for k, v in books.items() if not self.usable_books or k in self.usable_books}
@@ -121,7 +126,7 @@ class AlertEngine:
             book, dec = bp
             name = names[side]
             if live:
-                if pm_p is None:
+                if pm_p is None or not fresh_books:
                     continue
                 p = pm_p if side == 0 else 1 - pm_p
                 a = self._value("live", fight, name, p, book, dec, self.edge_live,
@@ -162,8 +167,10 @@ class AlertEngine:
         prev = self.sent.get(a.key)
         if prev:
             ts, score = prev
-            # Re-alert inside the cooldown only if the opportunity grew materially.
-            if now - ts < self.cooldown and a.score < score + 0.02:
+            # Re-alert inside the cooldown only if the opportunity grew materially; live prices and
+            # swings move every poll, so those wait out the cooldown.
+            grew = a.kind not in ("live", "swing") and a.score >= score + 0.02
+            if now - ts < self.cooldown and not grew:
                 return False
         self.sent[a.key] = (now, a.score)
         return True
