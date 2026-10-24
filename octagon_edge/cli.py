@@ -40,6 +40,12 @@ def main(argv: list[str] | None = None) -> None:
                         help="Test whether SplitPicks expert picks add anything to Kalshi prices and the model")
     be.add_argument("--since", default="2026-03-01")
 
+    st = sub.add_parser("settle", help="Fill in results from ufcstats and print the tracking scorecard")
+    st.add_argument("--card", default="ufc-333")
+
+    bp = sub.add_parser("backtest-props", help="Score the method / distance prop model on fights it never saw")
+    bp.add_argument("--split", default="2023-01-01")
+
     sub.add_parser("test-alert", help="Send a test notification to every configured channel")
 
     dr = sub.add_parser("doctor", help="Check every key and data source and explain fixes")
@@ -92,6 +98,26 @@ def main(argv: list[str] | None = None) -> None:
         hist = load_history()
         print(MB.run(hist.rows, load_odds_history(hist), s.model_weight, args.start_year,
                      args.holdout_from, youth_adj=s.youth_adj).summary())
+        return
+
+    if args.cmd == "backtest-props":
+        from .engine import props_model as PM
+        from .ingest import greco
+
+        print(PM.evaluate(load_history().rows, greco.load_fights(greco.download()), args.split))
+        return
+
+    if args.cmd == "settle":
+        import json
+
+        from . import services as S
+        from . import tracking
+        from .db import sessions
+
+        with sessions()() as db:
+            ev = S.sync_card(db, args.card)
+            print(f"Settled {tracking.settle_from_history(db, ev)} fight(s) from ufcstats")
+            print(json.dumps(tracking.scorecard(db), indent=1, default=str))
         return
 
     if args.cmd == "backtest-experts":

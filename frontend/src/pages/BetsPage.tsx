@@ -1,7 +1,54 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type BetRow, type BetSummary, type PaperRow } from "../lib/api";
+import { api, type BetRow, type BetSummary, type PaperRow, type Scorecard as ScorecardData } from "../lib/api";
 import { american, money, pct } from "../lib/format";
 import { ErrorNote, Loading } from "./common";
+
+const MARKET_NAMES: Record<string, string> = { moneyline: "Who wins", distance: "Goes the distance", method: "Method", round: "Round" };
+const TIER_NAMES: Record<string, string> = { value: "Value bets", lean: "Leans", check: "Props to check (at the bet-at price)" };
+
+/** Weekly scorecard: did the engine's chances and its bet plan hold up? */
+function Scorecard() {
+  const q = useQuery({ queryKey: ["track"], queryFn: () => api<ScorecardData>("/track") });
+  if (!q.data) return null;
+  const d = q.data;
+  const ll = (n: number | null) => (n == null ? "–" : n.toFixed(3));
+  return (
+    <>
+      <h3>Weekly scorecard</h3>
+      <section className="sheet">
+        {d.markets.length ? (
+          <table className="fig">
+            <thead><tr><th>Forecasts</th><th>n</th><th>Ours</th><th>Market</th><th>Model</th></tr></thead>
+            <tbody>{d.markets.map((m) => (
+              <tr key={m.market}><td>{MARKET_NAMES[m.market] ?? m.market}</td><td>{m.n}</td><td>{ll(m.log_loss)}</td>
+                <td>{ll(m.market_log_loss)}</td><td>{ll(m.model_log_loss)}</td></tr>
+            ))}</tbody>
+          </table>
+        ) : <p className="pad meta" style={{ margin: 0 }}>No settled fights yet. Forecasts are frozen when each fight starts and scored when the result is in.</p>}
+        {Object.keys(d.tiers).length > 0 && (
+          <table className="fig">
+            <thead><tr><th>Plan</th><th>Settled</th><th>Won</th><th>Staked</th><th>Profit</th><th>ROI</th></tr></thead>
+            <tbody>{Object.entries(d.tiers).map(([t, v]) => (
+              <tr key={t}><td>{TIER_NAMES[t] ?? t}</td><td>{v.settled}/{v.picks}</td><td>{v.won}</td><td>{money(v.staked)}</td>
+                <td className={v.profit > 0 ? "pos" : v.profit < 0 ? "neg" : ""}>{v.profit > 0 ? "+" : ""}{money(v.profit)}</td>
+                <td>{v.roi == null ? "–" : `${(v.roi * 100).toFixed(1)}%`}</td></tr>
+            ))}</tbody>
+          </table>
+        )}
+        {d.events.length > 0 && (
+          <table className="fig">
+            <thead><tr><th>Event</th><th>Bets</th><th>Staked</th><th>Profit</th></tr></thead>
+            <tbody>{d.events.map((e) => (
+              <tr key={e.event}><td>{e.event}</td><td>{e.settled}</td><td>{money(e.staked)}</td>
+                <td className={e.profit > 0 ? "pos" : e.profit < 0 ? "neg" : ""}>{e.profit > 0 ? "+" : ""}{money(e.profit)}</td></tr>
+            ))}</tbody>
+          </table>
+        )}
+        <p className="pad meta" style={{ margin: 0 }}>Log loss: lower is better. If "Model" beats "Market" for a prop market over a few events, the engine should start using the model there. Plan bets are tracked whether or not you placed them.</p>
+      </section>
+    </>
+  );
+}
 
 export function BetsPage() {
   const qc = useQueryClient();
@@ -50,6 +97,8 @@ export function BetsPage() {
         ) : <p className="pad meta" style={{ margin: 0 }}>No picks recorded yet.</p>}
         <p className="pad meta" style={{ margin: 0 }}>Every pick and value alert is scored against the de-vigged closing price. After about 50 picks this shows whether the edge from line shopping or from the model is real.</p>
       </section>
+
+      <Scorecard />
 
       <h3>History</h3>
       {bets.length ? (

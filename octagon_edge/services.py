@@ -18,10 +18,12 @@ from sqlalchemy.orm import Session
 from .alerts import AlertEngine, FightState
 from .analysis import FightAnalysis, analyze_card
 from .config import Settings
-from .db import (AlertRow, Bet, Event, Fight, LiveEstimate, LiveRound, OddsSnapshot, PaperPick, Prediction,
-                 PropSnapshot, SocialPost, get_setting, latest, utcnow)
+from . import tracking
+from .db import (AlertRow, Bet, Event, Fight, FightResult, LiveEstimate, LiveRound, OddsSnapshot, PaperPick,
+                 Prediction, PropSnapshot, SocialPost, get_setting, latest, utcnow)
 from .engine import live as L
 from .engine import model as M
+from .engine.edge import bet_at_decimal
 from .engine.odds_math import best_price, consensus_fair_prob
 from .ingest import card as card_mod
 from .ingest import news as news_mod
@@ -30,7 +32,8 @@ from .ingest.odds_api import BudgetExceeded, OddsApiClient, parse as parse_odds
 
 log = logging.getLogger(__name__)
 
-TUNABLE = ("bankroll", "kelly_fraction", "max_stake_pct", "edge_prefight", "edge_live", "model_weight")
+TUNABLE = ("bankroll", "kelly_fraction", "max_stake_pct", "edge_prefight", "edge_live", "model_weight",
+           "card_budget", "lean_edge")
 
 
 def effective_settings(db: Session) -> Settings:
@@ -111,8 +114,20 @@ def _details(fa: FightAnalysis) -> dict:
         "sides": [dataclasses.asdict(s) for s in fa.sides],
         "tone_a": fa.tone_a, "tone_b": fa.tone_b,
         "p_experts": fa.p_experts, "experts_source": fa.experts_source,
-        "blend_inputs": fa.blend_inputs, "pricing": fa.pricing,
+        "blend_inputs": fa.blend_inputs, "pricing": fa.pricing, "prop_model": fa.prop_model,
     }
+
+
+_PROP_MODEL: list = []
+
+
+def _prop_model():
+    """The trained prop model if one has been saved (pipeline.load_prop_model trains it); else None."""
+    from .engine import props_model as PM
+
+    if not _PROP_MODEL and PM.PROPS_MODEL_PATH.exists():
+        _PROP_MODEL.append(PM.load())
+    return _PROP_MODEL[0] if _PROP_MODEL else None
 
 
 def refresh_analysis(db: Session, ev: Event, hist, pipe, odds_client: OddsApiClient | None,
@@ -134,7 +149,7 @@ def refresh_analysis(db: Session, ev: Event, hist, pipe, odds_client: OddsApiCli
     else:
         odds, pms, items, experts, status = sources
     analyst = Analyst(s) if with_llm else None
-    analyses = analyze_card(card, hist, pipe, s, odds, pms, items, analyst, experts)
+    analyses = analyze_card(card, hist, pipe, s, odds, pms, items, analyst, experts, _prop_model())
     by_key = fight_by_key(ev)
     out = []
     for fa in analyses:
@@ -291,6 +306,127 @@ def props_view(db: Session, f: Fight, s: Settings) -> dict:
                 out["flags"].append({"point": point, "side": name, "book": bp[0], "decimal": bp[1],
                                      "edge": p_side - 1 / bp[1]})
         out["totals"].append(line)
+    out["outcomes"] = prop_outcomes(db, f, s, out)
+    return out
+
+
+def prop_label(outcome: str, f: Fight) -> str:
+    names = {"a": f.a, "b": f.b}
+    methods = {"ko": "KO/TKO", "sub": "submission", "dec": "decision"}
+    if outcome == "distance":
+        return "Goes the distance"
+    if outcome == "finish":
+        return "Doesn't go the distance"
+    if outcome == "draw":
+        return "Draw / no contest"
+    if outcome.startswith("ends_r"):
+        return f"Fight ends in round {outcome[6:]}"
+    side, rest = outcome.split("_", 1)
+    return f"{names[side]} in round {rest[1:]}" if rest.startswith("r") else f"{names[side]} by {methods[rest]}"
+
+
+def prop_outcomes(db: Session, f: Fight, s: Settings, view: dict | None = None) -> list[dict]:
+    """Every prop outcome with the engine's chance (Kalshi first, model fallback), both sources, and the
+    worst price still worth taking at your book."""
+    from .engine import props_model as PM
+
+    view = view or {}
+    kalshi = {"distance": (view.get("distance") or {}).get("p"),
+              "method": {m["outcome"]: m["p"] for m in view.get("method", [])} or None}
+    pred = latest(db, Prediction, f.id)
+    model = (pred.details or {}).get("prop_model") if pred else None
+    combined = PM.combine(kalshi, model, f.rounds)
+    if "distance" in combined:
+        p, src = combined["distance"]
+        combined["finish"] = (1 - p, src)
+    rows = []
+    for outcome, (p, src) in combined.items():
+        p_model = None
+        if model:
+            if outcome in model and not isinstance(model[outcome], (list, dict)):
+                p_model = model[outcome]
+            elif outcome == "finish":
+                p_model = 1 - model["distance"]
+            elif outcome.startswith("ends_r"):
+                p_model = model["ends_in_round"][int(outcome[6:]) - 1]
+            elif outcome[1:3] == "_r":
+                p_model = model[f"{outcome[0]}_round"][int(outcome[3:]) - 1]
+        rows.append({"outcome": outcome, "label": prop_label(outcome, f), "p": p, "source": src,
+                     "p_kalshi": kalshi["distance"] if outcome == "distance" else (kalshi["method"] or {}).get(outcome),
+                     "p_model": p_model, "fair_dec": 1 / p if p > 0.005 else None,
+                     "bet_at_dec": bet_at_decimal(p, s.edge_prefight)})
+    return rows
+
+
+# ---------- bet plan ----------
+
+def plan_options(db: Session, f: Fight, s: Settings) -> list:
+    """Everything bettable on one fight, with the engine's chance and (when a feed book has it) a price."""
+    from .engine.planner import Option
+
+    pred = latest(db, Prediction, f.id)
+    if not pred or pred.p_final is None:
+        return []
+    d = pred.details or {}
+    sides, pricing = d.get("sides") or [], d.get("pricing") or {}
+    out = []
+    for i, name in enumerate((f.a, f.b)):
+        sv = sides[i] if i < len(sides) else {}
+        out.append(Option(f.id, f.key, "moneyline", str(i), f"{name} to win", pred.p_final if i == 0 else 1 - pred.p_final,
+                          sv.get("decimal"), sv.get("book"), (pricing.get("bet_at_dec") or [None, None])[i],
+                          sv.get("source") or ""))
+    view = props_view(db, f, s)
+    for line in view["totals"]:
+        for side, p in (("over", line["fair_over"]), ("under", 1 - line["fair_over"])):
+            best = line[side]
+            out.append(Option(f.id, f.key, "total_rounds", f"{side} {line['point']}", f"{side.title()} {line['point']} rounds",
+                              p, best["decimal"] if best else None, best["book"] if best else None,
+                              bet_at_decimal(p, s.edge_prefight), "line shopping"))
+    # props to check at your own book: the likelier of distance / finish, and the likeliest method
+    outcomes = {o["outcome"]: o for o in view["outcomes"]}
+    picks = []
+    if "distance" in outcomes:
+        picks.append(max((outcomes["distance"], outcomes["finish"]), key=lambda o: o["p"]))
+    methods = [o for k, o in outcomes.items() if k[:2] in ("a_", "b_") and k[2:] in ("ko", "sub", "dec")]
+    if methods:
+        picks.append(max(methods, key=lambda o: o["p"]))
+    for o in picks:
+        out.append(Option(f.id, f.key, "prop", o["outcome"], o["label"], o["p"], None, None, o["bet_at_dec"], o["source"]))
+    return out
+
+
+def build_plan(db: Session, ev: Event, s: Settings, budget: float | None = None) -> dict:
+    from .engine import planner
+
+    options = [o for f in ev.fights if f.status == "scheduled" for o in plan_options(db, f, s)]
+    plan = planner.build(options, budget if budget is not None else s.card_budget, s.edge_prefight, s.lean_edge)
+    favourites = []
+    for f in ev.fights:
+        if f.status != "scheduled":
+            continue
+        ml = [o for o in options if o.fight_id == f.id and o.market == "moneyline"]
+        if len(ml) == 2:
+            fav = max(ml, key=lambda o: o.p)
+            favourites.append({"fight_id": f.id, "fight": f.key, "label": fav.label, "p": fav.p, "decimal": fav.decimal,
+                               "book": fav.book, "edge": None if not fav.decimal else fav.p - 1 / fav.decimal,
+                               "fair_dec": 1 / fav.p})
+    favourites.sort(key=lambda x: -x["p"])
+    return {**plan.to_dict(), "favourites": favourites, "threshold": s.edge_prefight, "lean_edge": s.lean_edge,
+            "home_book": s.home_book}
+
+
+def prop_alerts(engine: AlertEngine, f: Fight, flags: list[dict]) -> list:
+    """Entry alerts for total-rounds prices that beat the other books' consensus (deduped like value alerts)."""
+    from .alerts import Alert, _am
+
+    out = []
+    for fl in flags:
+        a = Alert("prop", f.key, f"VALUE PROP: {fl['side']} {fl['point']} rounds {_am(fl['decimal'])}",
+                  f"{f.key}: {fl['side']} {fl['point']} rounds {_am(fl['decimal'])} at {fl['book']}\n"
+                  f"Edge {fl['edge'] * 100:+.1f} pts over the other books' consensus (line shopping).",
+                  False, key=f"prop|{f.key}|{fl['point']}|{fl['side']}", score=fl["edge"])
+        if engine._should_send(a, time.time()):
+            out.append(a)
     return out
 
 
@@ -351,7 +487,10 @@ class PricePoller:
                 set_status(db, f, "live")
             pm_p = sum(m.p_a for m in lst) / len(lst) if lst else None
             books = (self.odds.get(f.key).books if self.odds.get(f.key) else {})
-            for a in engine.evaluate(f.key, self.states[f.id], books, pm_p, f.status == "live", targets):
+            alerts = engine.evaluate(f.key, self.states[f.id], books, pm_p, f.status == "live", targets)
+            if with_odds and f.status == "scheduled":
+                alerts += prop_alerts(engine, f, props_view(db, f, s)["flags"])
+            for a in alerts:
                 row = AlertRow(fight_id=f.id, kind=a.kind, title=a.title, body=a.body, urgent=a.urgent)
                 db.add(row)
                 rows.append(row)
@@ -444,13 +583,18 @@ def set_status(db: Session, f: Fight, status: str, winner: int | None = None) ->
             for pp in db.scalars(select(PaperPick).where(PaperPick.fight_id == f.id, PaperPick.close_fair.is_(None),
                                                          PaperPick.kind != "alert-live")):
                 pp.close_fair = fair if pp.side == 0 else 1 - fair
+        tracking.freeze(db, f)
     f.status = status
     if status == "finished":
+        if f.started_at is None:  # finished without being marked live: freeze what the engine said
+            tracking.freeze(db, f)
         f.winner = winner
         for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.result == "open")):
             settle_bet(b, winner)
         for pp in db.scalars(select(PaperPick).where(PaperPick.fight_id == f.id, PaperPick.result == "open")):
             pp.result = "void" if winner is None else "won" if winner == pp.side else "lost"
+        if db.get(FightResult, f.id) is None:
+            tracking.record_result(db, f, winner, source="app")
     db.commit()
 
 

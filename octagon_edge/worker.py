@@ -19,11 +19,12 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from sqlalchemy import select
 
 from . import services as S
+from . import tracking
 from .config import DATA_DIR
 from .db import Event, sessions
 from .ingest.odds_api import OddsApiClient
 from .notify import Notifier
-from .pipeline import load_history, load_live_model, load_model
+from .pipeline import load_history, load_live_model, load_model, load_prop_model
 from .watch import load_targets
 
 log = logging.getLogger("octagon_edge.worker")
@@ -51,6 +52,7 @@ class Worker:
         self.hist = load_history()
         self.pipe = load_model(self.hist)
         self.live = load_live_model(self.hist, self.pipe)
+        load_prop_model(self.hist)  # saved to disk; services loads it for the analysis
         with self.Session() as db:
             s = S.effective_settings(db)
             S.sync_card(db, slug)
@@ -109,7 +111,11 @@ class Worker:
         self.hist = load_history(refresh=True)
         self.pipe = load_model(self.hist, retrain=True)
         self.live = load_live_model(self.hist, self.pipe, retrain=True)
-        log.info("Stats refreshed and models retrained")
+        load_prop_model(self.hist, retrain=True)
+        S._PROP_MODEL.clear()
+        with self.Session() as db:  # settle finished fights from the fresh results and score the forecasts
+            settled = tracking.settle_from_history(db, self._event(db))
+        log.info("Stats refreshed, models retrained, %d fight(s) settled from results", settled)
 
 
 def main() -> None:

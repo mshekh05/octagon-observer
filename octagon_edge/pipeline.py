@@ -56,6 +56,15 @@ def load_expert_history(since: str = "2026-03-01"):
         return experts_history.load(fights, http, since), kalshi_history.load(fights, http, since)
 
 
+def load_prop_model(hist: History, retrain: bool = False):
+    """Method / distance / round model (engine.props_model), trained on first use and by the daily stats job."""
+    from .engine import props_model as PM
+
+    if not retrain and PM.PROPS_MODEL_PATH.exists():
+        return PM.load()
+    return PM.train(hist.rows, greco.load_fights(greco.download()))
+
+
 def load_model(hist: History, retrain: bool = False):
     if retrain or not M.MODEL_PATH.exists():
         log.info("Training model on %d fights", len(hist.rows))
