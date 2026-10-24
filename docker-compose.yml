@@ -1,25 +1,29 @@
-# Homelab stack.
-#   docker compose up -d                 -> app on :8000 (expose via Cloudflare Tunnel or Tailscale)
+# Homelab stack (deployed as a Dokploy Compose service: see deploy/DOKPLOY.md).
+#   docker compose up -d                 -> app on 127.0.0.1:8000 (publish with tailscale serve)
 #   docker compose run --rm cli doctor   -> health check of keys and sources
 #   docker compose run --rm cli report   -> reports/ufc-333.html (Phase-0 report)
+#
+# Paths default to this folder for local use. On the homelab, Dokploy sets them to
+# /srv/appdata/octagon-edge/..., because Dokploy re-clones this folder on every deploy.
+# Secrets live only in ENV_FILE; nothing secret is interpolated into this file.
 x-app: &app
   build: .
-  env_file: .env
+  env_file: ${ENV_FILE:-.env}
   environment:
-    DATABASE_URL: postgresql+psycopg://octagon:${POSTGRES_PASSWORD:-octagon}@db:5432/octagon
-  volumes: ["./data:/app/data", "./reports:/app/reports"]
+    POSTGRES_HOST: db  # with POSTGRES_PASSWORD from the env file -> the db service below
+  volumes: ["${DATA_DIR:-./data}:/app/data", "${REPORTS_DIR:-./reports}:/app/reports"]
   depends_on:
     db: { condition: service_healthy }
   restart: unless-stopped
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
+    env_file: ${ENV_FILE:-.env}  # POSTGRES_PASSWORD
     environment:
       POSTGRES_USER: octagon
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-octagon}
       POSTGRES_DB: octagon
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes: ["pgdata:/var/lib/postgresql/data", "${BACKUP_DIR:-./backups}:/backups"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U octagon"]
       interval: 5s
@@ -28,7 +32,13 @@ services:
 
   api:
     <<: *app
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   worker:
     <<: *app
@@ -45,9 +55,11 @@ services:
     image: binwiederhier/ntfy:v2.11.0
     command: serve
     ports: ["8090:80"]
-    volumes: ["./data/ntfy:/var/cache/ntfy"]
+    volumes: ["${DATA_DIR:-./data}/ntfy:/var/cache/ntfy"]
     restart: unless-stopped
     profiles: ["ntfy"]
 
 volumes:
   pgdata:
+    # a fixed name, so the Dokploy project (which has its own project name) keeps the same database
+    name: ${PGDATA_VOLUME:-octagon-edge_pgdata}

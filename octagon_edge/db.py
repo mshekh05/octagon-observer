@@ -260,7 +260,15 @@ class Setting(Base):
 
 
 def database_url() -> str:
-    return os.environ.get("DATABASE_URL") or f"sqlite:///{DATA_DIR / 'octagon.db'}"
+    """DATABASE_URL, else the compose Postgres (POSTGRES_HOST + POSTGRES_PASSWORD from the env file), else SQLite."""
+    if os.environ.get("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    if os.environ.get("POSTGRES_HOST"):
+        from urllib.parse import quote
+
+        password = quote(os.environ.get("POSTGRES_PASSWORD", "octagon"), safe="")
+        return f"postgresql+psycopg://octagon:{password}@{os.environ['POSTGRES_HOST']}:5432/octagon"
+    return f"sqlite:///{DATA_DIR / 'octagon.db'}"
 
 
 _engines: dict[str, sessionmaker] = {}

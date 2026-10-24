@@ -11,3 +11,4 @@ reports/*.html
 !/data/.gitkeep
 node_modules/
 frontend/dist/
+/backups/

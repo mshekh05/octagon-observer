@@ -157,3 +157,14 @@ def test_fighter_photo_prefers_the_ufc_athlete_page(tmp_path):
     found = images.lookup("Colby Thicknesse", httpx.Client(transport=httpx.MockTransport(handler)), tmp_path / "img.json")
     assert found == {"url": "https://www.ufc.com/images/2026-10/THICKNESSE_COLBY_10-24.png",
                      "credit": "https://www.ufc.com/athlete/colby-thicknesse"}
+
+
+def test_database_url_from_compose_password(monkeypatch):
+    from octagon_edge.db import database_url
+
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("POSTGRES_HOST", "db")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss/word")
+    assert database_url() == "postgresql+psycopg://octagon:p%40ss%2Fword@db:5432/octagon"
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///x.db")
+    assert database_url() == "sqlite:///x.db"

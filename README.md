@@ -19,6 +19,8 @@ docker compose up -d    # db + api (port 8000) + worker
 docker compose run --rm cli doctor
 ```
 
+On the homelab it runs as a Dokploy Compose service, with start, stop, redeploy and logs in the Dokploy UI: see [deploy/DOKPLOY.md](deploy/DOKPLOY.md).
+
 1. **Expose it over HTTPS.** Push alerts and installing the app both need HTTPS. Either:
    - Cloudflare Tunnel: `cloudflared tunnel --url http://localhost:8000`, or a named tunnel on your domain
    - Tailscale: `tailscale serve --bg 8000`, which gives a `https://<machine>.<tailnet>.ts.net` address on your devices only
@@ -88,8 +90,7 @@ octagon-edge watch --targets examples/targets.json   # leave running during the 
 Or with Docker:
 
 ```bash
-docker compose run --rm report
-docker compose up -d watch
+docker compose run --rm cli report
 ```
 
 ## Keys and settings (all free)
@@ -156,7 +157,7 @@ Each alert has a 10-minute cooldown. It repeats sooner only if the edge grows by
    - Run `octagon-edge test-alert` and `octagon-edge report`.
    - Open `reports/ufc-333.html` on your phone.
    - Check the Data sources panel for any failed source.
-2. **9:30.** Start `octagon-edge watch --targets your-targets.json` (or `docker compose up -d watch`).
+2. **9:30.** If you are not running the app (its worker already polls prices and sends alerts), start `octagon-edge watch --targets your-targets.json`. Never run both: they double the alerts and the Odds API spend.
 3. **During the card.**
    - In Chrome on a laptop, open the UFC.com fight tracker with DevTools → Network.
    - Save any `…/fight/live/*.json` response (right-click → Save all as HAR). This tells us if live in-fight stats are possible for Phase 4.
