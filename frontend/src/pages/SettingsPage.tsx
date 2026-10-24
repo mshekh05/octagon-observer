@@ -6,6 +6,8 @@ import { ErrorNote } from "./common";
 
 const FIELDS: [keyof SettingsData["tuning"], string, string, number][] = [
   ["bankroll", "Bankroll", "Total you set aside for betting", 1],
+  ["card_budget", "Budget per card", "What the bet plan splits across a card's value bets and leans", 1],
+  ["lean_edge", "Lean edge (%)", "Smaller edges that still get a half-size stake in the plan", 100],
   ["edge_prefight", "Pre-fight edge threshold (%)", "Alert when our probability beats the price by this much", 100],
   ["edge_live", "Live edge threshold (%)", "Higher, because live prices move fast", 100],
   ["kelly_fraction", "Kelly fraction (%)", "Share of the full Kelly stake to suggest", 100],

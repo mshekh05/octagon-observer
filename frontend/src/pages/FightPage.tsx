@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, post, type Books, type FightDetail, type LiveState, type Props, type Series, type SettingsData,
   type SocialSide } from "../lib/api";
 import { american, decimalFrom, orBetter, pct, pts, surname } from "../lib/format";
+import { FighterPhoto, usePhoto } from "../components/FighterPhoto";
 import { ProbChart } from "../components/ProbChart";
 import { RoundStrip } from "../components/RoundStrip";
 import { ErrorNote, Loading } from "./common";
@@ -30,6 +31,17 @@ const SOURCE_TEXT: Record<string, string> = {
   youth: "Youth: the younger fighter is underpriced by the market.",
   model: "Model: the stats model sees value the market doesn't.",
 };
+
+function PhotoCredits({ names }: { names: string[] }) {
+  const a = usePhoto(names[0]), b = usePhoto(names[1]);
+  const credits = [a.data, b.data].filter((p) => p?.url && p.credit);
+  if (!credits.length) return null;
+  return (
+    <p className="meta" style={{ textAlign: "center", margin: "4px 0 0" }}>
+      Photos: {credits.map((p, i) => <span key={p!.name}>{i ? " · " : ""}<a href={p!.credit!} target="_blank" rel="noreferrer">Wikimedia Commons</a></span>)}
+    </p>
+  );
+}
 
 function TapeTable({ f, rows }: { f: FightDetail; rows: TapeRow[] }) {
   const a = f.details.snap_a, b = f.details.snap_b;
@@ -118,28 +130,31 @@ function PropsSection({ f, home }: { f: FightDetail; home: string }) {
   const q = useQuery({ queryKey: ["props", f.id], queryFn: () => api<Props>(`/fights/${f.id}/props`), refetchInterval: 60_000 });
   if (!q.data) return <section className="sheet"><div className="pad"><Loading rows={1} /></div></section>;
   const d = q.data;
-  if (!d.distance && !d.method.length && !d.totals.length) {
+  if (!d.outcomes.length && !d.totals.length) {
     return <p className="notice">No prop prices yet. Kalshi props and sportsbook total rounds are fetched with the price feed.</p>;
   }
+  const groups: [string, (o: string) => boolean][] = [
+    ["Goes the distance", (o) => o === "distance" || o === "finish"],
+    ["Method of victory", (o) => /^[ab]_(ko|sub|dec)$/.test(o) || o === "draw"],
+    ["Round of a finish", (o) => /^ends_r\d$/.test(o)],
+    ["Who wins in which round", (o) => /^[ab]_r\d$/.test(o)],
+  ];
   return (
     <section className="sheet">
-      {d.distance && (
-        <table className="fig">
-          <thead><tr><th>Goes the distance (Kalshi)</th><th>Chance</th><th>Fair price</th></tr></thead>
-          <tbody>
-            <tr><td>Yes</td><td>{pct(d.distance.p)}</td><td>{american(1 / d.distance.p)}</td></tr>
-            <tr><td>No (a finish)</td><td>{pct(1 - d.distance.p)}</td><td>{american(1 / (1 - d.distance.p))}</td></tr>
-          </tbody>
-        </table>
-      )}
-      {d.method.length > 0 && (
-        <table className="fig">
-          <thead><tr><th>Method of victory (Kalshi)</th><th>Chance</th><th>Fair price</th></tr></thead>
-          <tbody>{d.method.map((m) => (
-            <tr key={m.outcome}><td>{m.label}</td><td>{pct(m.p)}</td><td>{m.p > 0.005 ? american(1 / m.p) : "–"}</td></tr>
-          ))}</tbody>
-        </table>
-      )}
+      {groups.map(([title, match]) => {
+        const rows = d.outcomes.filter((o) => match(o.outcome)).sort((x, y) => y.p - x.p);
+        return rows.length ? (
+          <table key={title} className="fig waterfall">
+            <thead><tr><th>{title}</th><th>Chance</th><th>Model</th><th>{home} ≥</th></tr></thead>
+            <tbody>{rows.map((o) => (
+              <tr key={o.outcome}>
+                <td>{o.label}<br /><span className="meta">{o.source}{o.p_kalshi != null && o.source !== "Kalshi" ? ` · Kalshi ${pct(o.p_kalshi)}` : ""}</span></td>
+                <td>{pct(o.p)}</td><td className="meta">{pct(o.p_model)}</td><td>{o.bet_at_dec ? american(o.bet_at_dec) : "–"}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        ) : null;
+      })}
       {d.totals.map((t) => (
         <table key={t.point} className="fig">
           <thead><tr><th>Total {t.point} rounds ({t.books} books)</th><th>Over</th><th>Under</th></tr></thead>
@@ -154,8 +169,9 @@ function PropsSection({ f, home }: { f: FightDetail; home: string }) {
         </table>
       ))}
       <p className="pad meta" style={{ margin: 0 }}>
-        Fair prices have no margin. Bet a prop at {home} only if it pays more than the fair price, and remember book props usually carry a big margin
-        (in the backtest every blind prop bet lost money except "favourite by decision"). Total-rounds edges are flagged only against a consensus of 3+ books.
+        Chances come from Kalshi where it has a market (it beat our prop model on 2026 fights); the round split uses the model's history of when finishes happen.
+        "{home} ≥" is the worst price still worth taking. Book props usually carry a big margin (in the backtest every blind prop bet lost money except
+        "favourite by decision"). Total-rounds edges are flagged only against a consensus of 3+ books.
       </p>
     </section>
   );
@@ -217,8 +233,13 @@ export function FightPage() {
     <main>
       <div className="topbar"><Link to="/" className="back">← Card</Link></div>
       <p className="meta">{f.weightclass}{f.title ? " title fight" : ""} · {f.rounds} rounds</p>
-      <h1>{f.a} <span className="muted">vs</span> {f.b}</h1>
-      <p className="meta fig">{d.record_a ?? "–"} · {d.record_b ?? "–"}</p>
+      <h1 className="sr-only">{f.a} vs {f.b}</h1>
+      <div className="faceoff">
+        <div><FighterPhoto name={f.a} size={88} /><span className="nm">{f.a}</span><span className="meta fig">{d.record_a ?? "–"}</span></div>
+        <span className="vs">vs</span>
+        <div><FighterPhoto name={f.b} size={88} /><span className="nm">{f.b}</span><span className="meta fig">{d.record_b ?? "–"}</span></div>
+      </div>
+      <PhotoCredits names={[f.a, f.b]} />
 
       <section className="sheet" style={{ marginTop: 16 }}>
         <div className="verdict">

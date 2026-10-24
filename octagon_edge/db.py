@@ -97,6 +97,49 @@ class PropSnapshot(Base):
     p: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class Forecast(Base):
+    """The engine's, the market's and the model's chance for one outcome, frozen when the fight starts."""
+    __tablename__ = "forecast"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fight_id: Mapped[int] = mapped_column(ForeignKey("fight.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(default=utcnow)
+    market: Mapped[str] = mapped_column(String(20))  # moneyline | distance | method | round
+    outcome: Mapped[str] = mapped_column(String(20))  # a | distance | a_ko | a_r2 | ends_r1 ...
+    p_ours: Mapped[float] = mapped_column(Float)
+    p_market: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p_model: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class PlanPick(Base):
+    """A bet the plan recommended, frozen when the fight starts, settled with the result."""
+    __tablename__ = "plan_pick"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fight_id: Mapped[int] = mapped_column(ForeignKey("fight.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(default=utcnow)
+    tier: Mapped[str] = mapped_column(String(10))  # value | lean | check
+    market: Mapped[str] = mapped_column(String(20))
+    outcome: Mapped[str] = mapped_column(String(20))
+    label: Mapped[str] = mapped_column(String(120))
+    p: Mapped[float] = mapped_column(Float)
+    decimal: Mapped[float | None] = mapped_column(Float, nullable=True)  # None for check-at-your-book props
+    book: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    bet_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stake: Mapped[float] = mapped_column(Float, default=0.0)
+    result: Mapped[str] = mapped_column(String(8), default="open")  # open | won | lost | void
+
+
+class FightResult(Base):
+    """How a fight ended: from ufcstats (daily refresh) or entered in the app."""
+    __tablename__ = "fight_result"
+    fight_id: Mapped[int] = mapped_column(ForeignKey("fight.id"), primary_key=True)
+    winner: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0 A, 1 B, None draw / no contest
+    method: Mapped[str | None] = mapped_column(String(8), nullable=True)  # KO | SUB | DEC
+    round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)  # total fight time, when known
+    source: Mapped[str] = mapped_column(String(20), default="app")
+    ts: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class AlertRow(Base):
     __tablename__ = "alert"
     id: Mapped[int] = mapped_column(primary_key=True)

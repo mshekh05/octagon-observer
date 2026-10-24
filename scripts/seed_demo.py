@@ -18,7 +18,7 @@ from octagon_edge.engine.odds_math import devig_power
 from octagon_edge.ingest.news import NewsItem
 from octagon_edge.ingest.odds_api import FightOdds
 from octagon_edge.ingest.prediction_markets import MarketProb
-from octagon_edge.pipeline import load_history, load_live_model, load_model
+from octagon_edge.pipeline import load_history, load_live_model, load_model, load_prop_model
 
 BOOKS = ("DraftKings", "FanDuel", "BetMGM", "Caesars")
 
@@ -36,6 +36,7 @@ def main() -> None:
     hist = load_history()
     pipe = load_model(hist)
     live_model = load_live_model(hist, pipe)
+    load_prop_model(hist)
     with sessions()() as db:
         ev = S.sync_card(db, "ufc-333")
         card = S.card_of(ev)
@@ -105,6 +106,13 @@ def main() -> None:
         db.add(Bet(fight_id=ev.fights[1].id, side=1, book="BetMGM", decimal=2.68, stake=24, note="demo"))
         db.add(Bet(fight_id=ev.fights[5].id, side=0, book="FanDuel", decimal=1.91, stake=15, closing_decimal=1.83,
                    result="won", pnl=13.65, note="demo"))
+        db.commit()
+        # one finished fight, so the scorecard has a settled fight to show
+        from octagon_edge import tracking
+        done = ev.fights[13]
+        S.set_status(db, done, "live")
+        S.set_status(db, done, "finished", 0)
+        tracking.record_result(db, done, 0, "DEC", 3, 900, source="demo")
         db.commit()
     print("Demo database seeded with SIMULATED data.")
 

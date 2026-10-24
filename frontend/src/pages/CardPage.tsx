@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, post, type EventDetail, type FightSummary, type LiveState, type Parlay, type SettingsData } from "../lib/api";
-import { ago, american, orBetter, pct, pts, surname } from "../lib/format";
+import { ago, american, pct, pts, surname } from "../lib/format";
+import { BetPlanSection } from "../components/BetPlan";
 import { RoundStrip } from "../components/RoundStrip";
 import { ErrorNote, Loading } from "./common";
 
@@ -97,8 +98,6 @@ export function CardPage() {
   if (!event.data) return <main><h1>Octagon Edge</h1><Loading /></main>;
   const ev = event.data;
   const home = ev.home_book || "your book";
-  const picks = ev.fights.filter((f) => f.pick);
-  const propFlags = ev.fights.flatMap((f) => (f.prop_flags ?? []).map((p) => ({ f, p })));
   const updated = ev.fights.map((f) => f.prediction_ts).filter(Boolean).sort().at(-1);
   return (
     <main>
@@ -106,42 +105,7 @@ export function CardPage() {
       <h1>{ev.name}</h1>
       <p className="meta">Updated {ago(updated)} · prices are the best at the books you use; "bet" is the worst price still worth taking at {home}</p>
 
-      <section className="sheet" aria-labelledby="value-h" style={{ marginTop: 16 }}>
-        <div className="sheet-head"><h2 id="value-h">Worth a bet now</h2><span className="meta fig">{picks.length + propFlags.length}</span></div>
-        {picks.length || propFlags.length ? (
-          <ul className="list">
-            {picks.map((f) => {
-              const side = f.pick!.side;
-              const s = f.sides?.[side];
-              const betAt = f.pricing?.bet_at_dec[side];
-              return (
-                <li key={f.id}>
-                  <Link to={`/fight/${f.id}`} style={{ textDecoration: "none" }}>
-                    <span className="value fig">{side === 0 ? f.a : f.b} {american(f.pick!.decimal)} @ {f.pick!.book}</span>
-                    <p className="meta fig" style={{ margin: "4px 0 0" }}>
-                      {s?.source === "line shopping" ? "Line shopping: this book is off the others" : s?.source === "youth" ? "Youth: the younger fighter is underpriced" : "Model"}
-                      {" · "}edge {pts(f.pick!.edge)} · stake up to {Math.round(f.pick!.stake)}{f.confidence === "low" ? " · low confidence" : ""}
-                    </p>
-                    <p className="meta fig" style={{ margin: "2px 0 0" }}>
-                      At {home}: {orBetter(betAt)} · prices {ago(f.prices_ts)}
-                    </p>
-                  </Link>
-                </li>
-              );
-            })}
-            {propFlags.map(({ f, p }) => (
-              <li key={`${f.id}-${p.point}-${p.side}`}>
-                <Link to={`/fight/${f.id}`} style={{ textDecoration: "none" }}>
-                  <span className="value fig">{surname(f.a)}–{surname(f.b)}: {p.side} {p.point} rounds {american(p.decimal)} @ {p.book}</span>
-                  <p className="meta fig" style={{ margin: "4px 0 0" }}>Prop line shopping · edge {pts(p.edge)} over the other books' consensus</p>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="pad meta" style={{ margin: 0 }}>Nothing yet. No price at your books beats our estimate by the edge threshold, and passing is the right call. Each fight shows the price worth taking at {home}.</p>
-        )}
-      </section>
+      {slug && <BetPlanSection slug={slug} />}
 
       {SEGMENTS.map(([seg, label]) => {
         const fights = ev.fights.filter((f) => f.segment === seg);

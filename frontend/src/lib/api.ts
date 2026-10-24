@@ -118,12 +118,60 @@ export interface TotalsLine {
   under: { book: string; decimal: number; edge: number } | null;
 }
 
+export interface PropOutcome {
+  outcome: string;
+  label: string;
+  p: number;
+  source: string;
+  p_kalshi: number | null;
+  p_model: number | null;
+  fair_dec: number | null;
+  bet_at_dec: number | null;
+}
+
 export interface Props {
   distance: { p: number; ts: string } | null;
   method: { outcome: string; label: string; p: number }[];
   totals: TotalsLine[];
   threshold: number;
   flags: PropFlag[];
+  outcomes: PropOutcome[];
+}
+
+export interface PlanBet {
+  fight_id: number;
+  fight: string;
+  market: "moneyline" | "total_rounds" | "prop";
+  outcome: string;
+  label: string;
+  p: number;
+  decimal: number | null;
+  book: string | null;
+  bet_at: number | null;
+  source: string;
+  tier: "value" | "lean" | "check";
+  edge: number | null;
+  ev: number | null;
+  stake: number;
+}
+
+export interface BetPlan {
+  budget: number;
+  spent: number;
+  unspent: number;
+  bets: PlanBet[];
+  checks: PlanBet[];
+  favourites: { fight_id: number; fight: string; label: string; p: number; decimal: number | null; book: string | null; edge: number | null; fair_dec: number }[];
+  threshold: number;
+  lean_edge: number;
+  home_book: string;
+}
+
+export interface Scorecard {
+  markets: { market: string; n: number; log_loss: number; brier: number; market_log_loss: number | null; model_log_loss: number | null }[];
+  tiers: Record<string, { picks: number; settled: number; won: number; staked: number; profit: number; roi: number | null }>;
+  events: { event: string; settled: number; staked: number; profit: number }[];
+  settled_fights: number;
 }
 
 export interface Books {
@@ -277,7 +325,7 @@ export interface Parlay {
 }
 
 export interface SettingsData {
-  tuning: Record<"bankroll" | "kelly_fraction" | "max_stake_pct" | "edge_prefight" | "edge_live" | "model_weight", number>;
+  tuning: Record<"bankroll" | "kelly_fraction" | "max_stake_pct" | "edge_prefight" | "edge_live" | "model_weight" | "card_budget" | "lean_edge", number>;
   channels: string[];
   llm_provider: string;
   odds_api: boolean;

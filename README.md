@@ -30,17 +30,24 @@ docker compose run --rm cli doctor
    - Lock the phone and check the test alert arrives.
 3. **Set your books.** In **Settings → Your sportsbooks**, set your main book (default Fanatics) and tick the feed books you can bet at. Picks and "best price" only use those.
    - **Fanatics isn't in The Odds API feed.** Every fight shows the worst price still worth taking there ("bet ≥ +127"). On the Fight page, **Check a Fanatics price** tells you at once whether a price clears the bar, and what to stake.
-4. **Reading a fight:**
+4. **Your bet plan** (top of the Card): set a budget for the card and the engine splits it.
+   - **Value bets** (edge ≥ `EDGE_PREFIGHT` at your books) get full weight; **leans** (edge ≥ `LEAN_EDGE`, positive expected value) get half, and at most half the budget together. Stakes follow each bet's Kelly fraction, capped at 30% of the budget per bet and 40% per fight. Nothing is staked where the engine expects a loss, so on a quiet card most of the budget stays unspent.
+   - **Leans** have an "Alert me when it's value" button: one tap sets a price alert at the price where the bet becomes value.
+   - **Props to check at Fanatics:** for each fight, the likelier of distance/finish and the likeliest method, with the worst Fanatics price still worth taking and the stake to use.
+   - **Most likely winners** are listed for comparison, with their (usually negative) edge.
+5. **Weekly tracking** (Bets → Weekly scorecard): when a fight starts, every forecast (who wins, distance, method, round) and every plan bet is frozen; results come from ufcstats in the daily refresh, or from "Fight over?" in Live (pick KO/TKO, submission or decision, and the round). The scorecard compares the engine's log loss with the market's and the prop model's for each market, and shows the plan's profit per tier and event. `octagon-edge settle` does the same from the command line.
+6. **Reading a fight:**
    - **Card:** each fighter's best price at your books, our fair price and the "bet at" price. Picks say where the edge comes from (line shopping or youth). Fights without a pick show how close they are.
    - **Fight page:** the verdict first, then how we priced it (market → youth → our price), prices by book, props, price alerts, live scoring, and the tale of the tape (▲ marks the better number).
-   - **Props:** Kalshi "goes the distance" and method of victory as fair prices (no margin), plus total-rounds line shopping across sportsbooks, flagged when one book beats the others' consensus by the edge threshold. Total rounds cost an extra Odds API credit per fetch, so on event day they're fetched every 30 minutes (`TOTALS_EVERY`).
+   - **Fighter photos** come from Wikimedia Commons (free licences, credited under the photos); fighters without a free photo get their initials.
+   - **Props:** chances for goes the distance, method, round of a finish, and who wins in which round, with the worst Fanatics price worth taking. They come from Kalshi where it has a market; Kalshi beat our prop model on its "goes the distance" prices for 371 fights in 2026 (log loss 0.543 vs 0.673), so the model only supplies how finishes split across rounds, and fills in when Kalshi has nothing (`octagon-edge backtest-props` scores it: method given the winner 0.960 vs 1.013 for weight-class rates). Plus total-rounds line shopping across sportsbooks, flagged when one book beats the others' consensus by the edge threshold. Total rounds cost an extra Odds API credit per fetch, so on event day they're fetched every 30 minutes (`TOTALS_EVERY`).
    - **Price alerts:** set "alert me at +150" on a fighter from the Fight page; a push arrives when a book in the feed reaches it.
    - **Parlays** (link at the bottom of the Card) are built only from the single-bet picks.
-5. **On fight night:**
+7. **On fight night:**
    - The worker polls Kalshi and Polymarket every 20 seconds and the Odds API every 4 minutes. Before the event day it checks the Odds API every 3 hours in fight week (most line movement happens then) and every 12 hours before that.
    - Open **Live**, pick the fight on screen, and tap the round box to score each round. A knockdown counts for more.
    - The live probability updates straight away, and alerts arrive as push notifications.
-6. **After a bet:**
+8. **After a bet:**
    - Log it from the fight page (the book defaults to your main book).
    - The closing price is captured when the fight starts, and the bet settles when you tap the winner.
    - **Bets** shows profit/loss, ROI and closing-line value (CLV).

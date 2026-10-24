@@ -179,6 +179,17 @@ def parlays(slug: str, legs: str = "2,3", limit: int = 15, db: Session = Depends
     } for c in combos]
 
 
+@app.get("/api/events/{slug}/plan", dependencies=[api])
+def plan(slug: str, budget: float | None = None, db: Session = Depends(get_db)):
+    """The bet plan for a budget (default: your saved card budget)."""
+    ev = db.scalars(select(Event).where(Event.slug == slug)).first()
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    if budget is not None and budget <= 0:
+        raise HTTPException(400, "Budget must be positive")
+    return S.build_plan(db, ev, S.effective_settings(db), budget)
+
+
 @app.post("/api/events/{slug}/refresh", dependencies=[api])
 def refresh(slug: str, tasks: BackgroundTasks, news: bool = True, llm: bool = True, db: Session = Depends(get_db)):
     ev = S.sync_card(db, slug)
@@ -231,6 +242,21 @@ def set_target(fight_id: int, body: TargetBody, db: Session = Depends(get_db)):
     put_setting(db, "targets", targets)
     db.commit()
     return {"targets": [targets.get(f.a), targets.get(f.b)]}
+
+
+@app.get("/api/fighters/image", dependencies=[api])
+def fighter_image(name: str):
+    """A freely licensed photo of the fighter from Wikipedia, cached on the server; url is null when none exists."""
+    import httpx
+
+    from .ingest import images
+
+    try:
+        with httpx.Client(timeout=10, follow_redirects=True) as http:
+            found = images.lookup(name.strip()[:80], http)
+    except httpx.HTTPError:
+        found = None
+    return {"name": name, "url": found["url"] if found else None, "credit": found.get("credit") if found else None}
 
 
 @app.get("/api/books", dependencies=[api])
@@ -354,13 +380,28 @@ def delete_round(fight_id: int, rnd: int, db: Session = Depends(get_db)):
 class StatusBody(BaseModel):
     status: str = Field(pattern="^(scheduled|live|finished)$")
     winner: int | None = Field(default=None, ge=0, le=1)
+    method: str | None = Field(default=None, pattern="^(KO|SUB|DEC)$")  # how it ended, for prop tracking
+    round: int | None = Field(default=None, ge=1, le=5)
 
 
 @app.post("/api/fights/{fight_id}/status", dependencies=[api])
 def fight_status(fight_id: int, body: StatusBody, db: Session = Depends(get_db)):
+    from . import tracking
+
     f = _fight(db, fight_id)
     S.set_status(db, f, body.status, body.winner)
+    if body.status == "finished" and (body.method or body.round):
+        tracking.record_result(db, f, body.winner, body.method, body.round, source="app")
+        db.commit()
     return fight_summary(db, f)
+
+
+@app.get("/api/track", dependencies=[api])
+def track(db: Session = Depends(get_db)):
+    """Scorecard: forecasts vs results per market, and the plan's results per tier and event."""
+    from . import tracking
+
+    return tracking.scorecard(db)
 
 
 # ---------- alerts & live stream ----------
@@ -496,6 +537,8 @@ class TuningBody(BaseModel):
     edge_prefight: float | None = Field(default=None, ge=0, le=0.5)
     edge_live: float | None = Field(default=None, ge=0, le=0.5)
     model_weight: float | None = Field(default=None, ge=0, le=1)
+    card_budget: float | None = Field(default=None, gt=0)
+    lean_edge: float | None = Field(default=None, ge=0, le=0.5)
 
 
 @app.put("/api/settings", dependencies=[api])

@@ -56,6 +56,8 @@ class Settings:
     home_book: str = "Fanatics"  # the book you bet at; not in the Odds API feed, so it gets "bet at" prices
     usable_books: tuple[str, ...] = ()  # books you can bet at; empty = all books in the feed
     totals_every: int = 1800  # seconds between total-rounds fetches on event day (costs an extra credit)
+    card_budget: float = 100.0  # what you want to spend on a card; the bet plan splits it
+    lean_edge: float = 0.015  # smaller edges that still get a (half-weight) lean stake
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -92,4 +94,6 @@ class Settings:
             home_book=e("HOME_BOOK", "") or "Fanatics",
             usable_books=tuple(b.strip() for b in e("USABLE_BOOKS", "").split(",") if b.strip()),
             totals_every=int(_f("TOTALS_EVERY", 1800)),
+            card_budget=_f("CARD_BUDGET", 100.0),
+            lean_edge=_f("LEAN_EDGE", 0.015),
         )

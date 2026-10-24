@@ -79,8 +79,11 @@ export function LiveScorer() {
       if (fight.data && round != null && round < fight.data.rounds) setRound(round + 1);
     },
   });
+  const [method, setMethod] = useState<"KO" | "SUB" | "DEC" | null>(null);
+  const [endRound, setEndRound] = useState<number | null>(null);
   const finish = useMutation({
-    mutationFn: (w: 0 | 1 | null) => post(`/fights/${id}/status`, { status: "finished", winner: w }),
+    mutationFn: (w: 0 | 1 | null) => post(`/fights/${id}/status`, {
+      status: "finished", winner: w, method, round: method === "DEC" ? fight.data?.rounds : endRound }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["live", id] }); qc.invalidateQueries({ queryKey: ["fight", id] }); qc.invalidateQueries({ queryKey: ["bets"] }); },
   });
 
@@ -152,12 +155,27 @@ export function LiveScorer() {
 
       {!finished && <>
         <h3>Fight over?</h3>
-        <div className="row">
+        <p className="meta" style={{ margin: "0 0 8px" }}>How it ended (optional, settles the prop bets tonight; ufcstats fills it in later anyway)</p>
+        <div className="row" role="radiogroup" aria-label="Method">
+          {(["KO", "SUB", "DEC"] as const).map((m) => (
+            <button key={m} type="button" role="radio" aria-checked={method === m} className={`btn${method === m ? " sel" : ""}`}
+              onClick={() => setMethod(method === m ? null : m)}>{m === "KO" ? "KO/TKO" : m === "SUB" ? "Submission" : "Decision"}</button>
+          ))}
+        </div>
+        {method && method !== "DEC" && (
+          <div className="row" role="radiogroup" aria-label="Round" style={{ marginTop: 8 }}>
+            {Array.from({ length: f.rounds }, (_, i) => i + 1).map((r) => (
+              <button key={r} type="button" role="radio" aria-checked={endRound === r} className={`btn${endRound === r ? " sel" : ""}`}
+                onClick={() => setEndRound(r)}>R{r}</button>
+            ))}
+          </div>
+        )}
+        <div className="row" style={{ marginTop: 8 }}>
           <button className="btn" onClick={() => finish.mutate(0)}>{surname(f.a)} won</button>
           <button className="btn" onClick={() => finish.mutate(1)}>{surname(f.b)} won</button>
         </div>
         <button className="btn block" style={{ marginTop: 8 }} onClick={() => finish.mutate(null)}>Draw or no contest</button>
-        <p className="meta" style={{ marginTop: 8 }}>Settles your logged bets on this fight.</p>
+        <p className="meta" style={{ marginTop: 8 }}>Settles your logged bets and the plan's bets on this fight, and scores the forecasts.</p>
       </>}
     </main>
   );

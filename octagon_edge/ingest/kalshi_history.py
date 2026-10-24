@@ -32,15 +32,15 @@ def _ts(iso: str) -> int:
     return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
 
 
-def settled_markets(http: httpx.Client, since: str) -> list[dict]:
-    """Every fight market in the UFC series settled yes/no since `since` (YYYY-MM-DD).
+def settled_markets(http: httpx.Client, since: str, series_list: tuple[str, ...] = KALSHI_SERIES) -> list[dict]:
+    """Every market in these series settled yes/no since `since` (YYYY-MM-DD).
 
     Recent markets come from /markets; older ones are moved to /historical/markets
     (each market is tagged with `_historical` so its candles come from the right place).
     Cancelled bouts settle as something other than yes/no and are dropped.
     """
     out = []
-    for series in KALSHI_SERIES:
+    for series in series_list:
         out += _paged(http, KALSHI_URL, {"series_ticker": series, "status": "settled", "limit": 1000,
                                          "min_close_ts": _ts(f"{since}T00:00:00Z")}, "markets", pages=30)
         recent = {m["ticker"] for m in out}
@@ -94,21 +94,61 @@ def closing_price(http: httpx.Client, market: dict, series: str = KALSHI_SERIES[
     return None
 
 
-def load(fights: pd.DataFrame, http: httpx.Client, since: str, cache: Path = CACHE) -> pd.DataFrame:
-    """url, p_kalshi (de-vigged P(fighter_a wins) at the close) for bouts with both fighters' markets."""
+def _prices(http: httpx.Client, markets: list[dict], cache: Path, series: str = KALSHI_SERIES[0]) -> dict:
     prices: dict[str, float | None] = json.loads(cache.read_text()) if cache.exists() else {}
-    markets = settled_markets(http, since)
     for m in markets:
         if m["ticker"] not in prices:
             try:
-                prices[m["ticker"]] = closing_price(http, m)
+                prices[m["ticker"]] = closing_price(http, m, series)
             except httpx.HTTPError as exc:
                 log.warning("Kalshi candles for %s unavailable: %s", m["ticker"], exc)
                 continue
             time.sleep(0.25)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(prices))
-    return match(markets, prices, fights)
+    return prices
+
+
+def load(fights: pd.DataFrame, http: httpx.Client, since: str, cache: Path = CACHE) -> pd.DataFrame:
+    """url, p_kalshi (de-vigged P(fighter_a wins) at the close) for bouts with both fighters' markets."""
+    markets = settled_markets(http, since)
+    return match(markets, _prices(http, markets, cache), fights)
+
+
+def load_distance(fights: pd.DataFrame, http: httpx.Client, since: str, cache: Path = CACHE) -> pd.DataFrame:
+    """url, p_distance: Kalshi's closing P(goes the distance), linked to bouts via the winner markets' event code."""
+    winners = match_codes(settled_markets(http, since), fights)
+    dist = settled_markets(http, since, ("KXUFCDISTANCE",))
+    prices = _prices(http, dist, cache, "KXUFCDISTANCE")
+    rows = []
+    for m in dist:
+        url = winners.get(m["event_ticker"].split("-", 1)[-1])
+        if url and prices.get(m["ticker"]) is not None:
+            rows.append({"url": url, "p_distance": prices[m["ticker"]]})
+    return pd.DataFrame(rows, columns=["url", "p_distance"]).drop_duplicates("url")
+
+
+def match_codes(markets: list[dict], fights: pd.DataFrame) -> dict[str, str]:
+    """Kalshi event code ('26OCT24YANDVA') -> ufcstats bout url, from the per-fighter winner markets."""
+    out = {}
+    for code_ticker, row in _matched(markets, fights):
+        out[code_ticker.split("-", 1)[-1]] = row.url
+    return out
+
+
+def _matched(markets: list[dict], fights: pd.DataFrame):
+    by_event: dict[str, list[dict]] = {}
+    for m in markets:
+        by_event.setdefault(m["event_ticker"], []).append(m)
+    for event, ms in by_event.items():
+        names = [m.get("yes_sub_title") or "" for m in ms]
+        day = datetime.fromtimestamp(_cutoff(ms[0]) + 600, tz=timezone.utc).date()
+        cands = fights[(fights["date"].dt.date >= day - timedelta(days=1)) & (fights["date"].dt.date <= day)]
+        for r in cands.itertuples():
+            f = Fight(r.fighter_a, r.fighter_b, "")
+            if sorted(s for s in (f.side_of(n) for n in names if n) if s is not None) == [0, 1]:
+                yield event, r
+                break
 
 
 def match(markets: list[dict], prices: dict[str, float | None], fights: pd.DataFrame) -> pd.DataFrame:

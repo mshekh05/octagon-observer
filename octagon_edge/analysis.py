@@ -71,6 +71,7 @@ class FightAnalysis:
     experts_source: str = ""
     blend_inputs: dict = field(default_factory=dict)  # what the alert engine needs to re-blend with fresh prices
     pricing: dict = field(default_factory=dict)  # how p_final was built, fair and "bet at" prices
+    prop_model: dict | None = None  # method / distance / round chances from engine.props_model
 
     def name(self, side: int) -> str:
         return self.fight.a if side == 0 else self.fight.b
@@ -115,7 +116,7 @@ def threshold_mult(confidence: str) -> float:
 def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settings,
                   odds: FightOdds | None = None, pms: list[MarketProb] | None = None,
                   news: list[NewsItem] | None = None, analyst: Analyst | None = None,
-                  experts: ExpertConsensus | None = None) -> FightAnalysis:
+                  experts: ExpertConsensus | None = None, prop_model=None) -> FightAnalysis:
     """Pre-fight verdict for one fight.
 
     The market is the anchor: p_final leans mostly on the de-vigged price (MODEL_WEIGHT
@@ -190,6 +191,8 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
     best = max((0, 1), key=lambda i: fa.sides[i].edge if fa.sides[i].edge is not None else -1)
     if fa.sides[best].edge is not None and fa.sides[best].edge >= threshold and real_books:
         fa.pick = best
+    if prop_model is not None and fa.p_final is not None:
+        fa.prop_model = prop_model.predict(snap_a, snap_b, fa.p_final, fight.weightclass, fight.rounds)
     return fa
 
 
@@ -214,8 +217,9 @@ def llm_context(fa: FightAnalysis) -> dict:
 def analyze_card(card: Card, hist: History, pipe, s: Settings, odds: dict[str, FightOdds],
                  pms: dict[str, list[MarketProb]], news: list[NewsItem],
                  analyst: Analyst | None = None,
-                 experts: dict[str, ExpertConsensus] | None = None) -> list[FightAnalysis]:
+                 experts: dict[str, ExpertConsensus] | None = None, prop_model=None) -> list[FightAnalysis]:
     on = pd.Timestamp(card.date)
     experts = experts or {}
-    return [analyze_fight(f, hist, pipe, on, s, odds.get(f.key), pms.get(f.key, []), news, analyst, experts.get(f.key))
+    return [analyze_fight(f, hist, pipe, on, s, odds.get(f.key), pms.get(f.key, []), news, analyst, experts.get(f.key),
+                          prop_model)
             for f in card.fights]
