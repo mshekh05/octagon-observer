@@ -12,6 +12,8 @@ export function american(decimal: number | null | undefined): string {
 
 export const surname = (name: string) => name.split(" ").slice(-1)[0];
 
+export const americanInt = (a: number) => (a > 0 ? `+${a}` : `−${Math.abs(a)}`);
+
 export const money = (n: number | null | undefined) =>
   n == null ? "–" : `${n < 0 ? "−" : ""}${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 

@@ -74,7 +74,10 @@ def _fight(fa: FightAnalysis, bankroll: float) -> str:
         h.append('<p class="nopick">No bet: no price beats the blended probability by the edge threshold'
                  f'{" (or no live sportsbook odds yet)" if not any(k != "Reference" for k in fa.books) else ""}.</p>')
 
-    rows = [("Stats model", fa.p_model), (f"Market — {fa.market_source}", fa.p_market), ("Blended (used for edge)", fa.p_final)]
+    rows = [("Stats model", fa.p_model), (f"Market — {fa.market_source}", fa.p_market)]
+    if fa.p_experts is not None:
+        rows.append((f"Handicappers — {fa.experts_source}", fa.p_experts))
+    rows.append(("Blended (used for edge)", fa.p_final))
     h.append('<div class="scroll"><table class="num"><tr><th></th><th class="a">' + escape(f.a.split()[-1])
              + '</th><th class="b">' + escape(f.b.split()[-1]) + '</th></tr>')
     for label, p in rows:

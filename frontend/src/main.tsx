@@ -10,6 +10,7 @@ import { CardPage } from "./pages/CardPage";
 import { FightPage } from "./pages/FightPage";
 import { LivePicker, LiveScorer } from "./pages/LivePage";
 import { BetsPage } from "./pages/BetsPage";
+import { ParlaysPage } from "./pages/ParlaysPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 10_000, retry: 1 } } });
@@ -32,6 +33,7 @@ function Shell() {
         <Route path="/fight/:id/live" element={<LiveScorer />} />
         <Route path="/live" element={<LivePicker />} />
         <Route path="/bets" element={<BetsPage />} />
+        <Route path="/parlays" element={<ParlaysPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<main><h1>Not found</h1><p className="meta">That page doesn't exist.</p></main>} />
       </Routes>

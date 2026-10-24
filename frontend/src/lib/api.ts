@@ -187,6 +187,28 @@ export interface BetSummary {
   clv_n: number;
 }
 
+export interface ParlayLeg {
+  fight_id: number;
+  fight: string;
+  name: string;
+  side: 0 | 1;
+  p: number;
+  decimal: number;
+  book: string;
+  single_edge: number;
+}
+
+export interface Parlay {
+  decimal: number;
+  american: number;
+  p: number;
+  edge: number;
+  ev: number;
+  stake: number;
+  stake_pct: number;
+  legs: ParlayLeg[];
+}
+
 export interface SettingsData {
   tuning: Record<"bankroll" | "kelly_fraction" | "max_stake_pct" | "edge_prefight" | "edge_live" | "model_weight", number>;
   channels: string[];

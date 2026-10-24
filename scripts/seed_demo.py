@@ -75,7 +75,7 @@ def main() -> None:
         ]
         status = {"The Odds API (US books)": "ok: SIMULATED demo prices", "Kalshi / Polymarket": "ok: SIMULATED demo prices",
                   "News": "ok: 3 SIMULATED demo items"}
-        S.refresh_analysis(db, ev, hist, pipe, None, with_news=False, with_llm=False, sources=(odds, pms, items, status))
+        S.refresh_analysis(db, ev, hist, pipe, None, with_news=False, with_llm=False, sources=(odds, pms, items, {}, status))
 
         # main event is live: two rounds scored
         main_fight = ev.fights[0]

@@ -29,6 +29,15 @@ def blend(p_model: float | None, p_market: float | None, model_weight: float,
     return min(max(p + adj, 0.01), 0.99)
 
 
+def scaled_weight(weight: float, n: int, full_at: int = 3) -> float:
+    """A source's blend weight, scaled down when its sample size `n` is thin.
+
+    One picker on an undercard fight shouldn't move a blend as hard as a full
+    panel does; weight ramps linearly up to `weight` once n reaches `full_at`.
+    """
+    return weight * min(1.0, n / full_at) if full_at > 0 else weight
+
+
 def edge(p: float, decimal: float) -> float:
     """Probability edge over the price's implied probability."""
     return p - 1 / decimal

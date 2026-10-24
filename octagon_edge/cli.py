@@ -88,10 +88,10 @@ def main(argv: list[str] | None = None) -> None:
         from .report import render
 
         client = OddsApiClient(s.odds_api_key, s.odds_api_regions, s.odds_api_budget) if s.odds_api_key else None
-        odds, pms, items, status = fetch_sources(card, s, client, with_news=not args.no_news)
+        odds, pms, items, experts, status = fetch_sources(card, s, client, with_news=not args.no_news)
         analyst = Analyst(s)
         status["LLM analyst"] = f"ok: {s.llm_provider}" if analyst.enabled else "skipped: LLM_PROVIDER=none"
-        analyses = analyze_card(card, hist, pipe, s, odds, pms, items, analyst)
+        analyses = analyze_card(card, hist, pipe, s, odds, pms, items, analyst, experts)
         html = render(card, analyses, s.bankroll, M.backtest(hist.rows).summary(), status)
         out = args.out or REPORTS_DIR / f"{args.card}.html"
         out.parent.mkdir(parents=True, exist_ok=True)

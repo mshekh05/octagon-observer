@@ -26,7 +26,7 @@ from .config import ROOT
 from .db import (AlertRow, Bet, Event, Fight, LiveEstimate, LiveRound, OddsSnapshot, Prediction, PushSubscription,
                  SocialPost, latest, put_setting, sessions)
 from .engine.live import RoundInput
-from .engine.odds_math import american_to_decimal, consensus_fair_prob
+from .engine.odds_math import american_to_decimal, consensus_fair_prob, decimal_to_american
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Octagon Edge", version="0.2.0")
@@ -131,6 +131,32 @@ def event(slug: str, db: Session = Depends(get_db)):
     sources = next((p.details.get("sources") for p in preds if p and p.details.get("sources")), {})
     return {"slug": ev.slug, "name": ev.name, "date": ev.date, "venue": ev.venue, "note": ev.note,
             "sources": sources, "fights": [fight_summary(db, f) for f in ev.fights]}
+
+
+@app.get("/api/events/{slug}/parlays", dependencies=[api])
+def parlays(slug: str, legs: str = "2,3", limit: int = 15, db: Session = Depends(get_db)):
+    from .engine.parlay import build_legs, generate_parlays
+
+    ev = db.scalars(select(Event).where(Event.slug == slug)).first()
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    s = S.effective_settings(db)
+    rows = []
+    for f in ev.fights:
+        if f.status == "finished":
+            continue
+        pred = latest(db, Prediction, f.id)
+        if not pred:
+            continue
+        rows.append({"id": f.id, "a": f.a, "b": f.b, "p_final": pred.p_final, "sides": pred.details.get("sides")})
+    sizes = tuple(int(n) for n in legs.split(",") if n.strip())
+    combos = generate_parlays(build_legs(rows), sizes, s.bankroll, s.kelly_fraction, s.max_stake_pct, limit)
+    return [{
+        "decimal": c.decimal, "american": decimal_to_american(c.decimal),
+        "p": c.p, "edge": c.edge, "ev": c.ev, "stake": c.stake, "stake_pct": c.stake_pct,
+        "legs": [{"fight_id": l.fight_id, "fight": l.fight_key, "name": l.name, "side": l.side,
+                  "p": l.p, "decimal": l.decimal, "book": l.book, "single_edge": l.single_edge} for l in c.legs],
+    } for c in combos]
 
 
 @app.post("/api/events/{slug}/refresh", dependencies=[api])

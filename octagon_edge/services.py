@@ -93,19 +93,20 @@ def _details(fa: FightAnalysis) -> dict:
         "prediction_markets": [{"source": m.source, "p_a": m.p_a} for m in fa.prediction_markets],
         "sides": [dataclasses.asdict(s) for s in fa.sides],
         "tone_a": fa.tone_a, "tone_b": fa.tone_b,
+        "p_experts": fa.p_experts, "experts_source": fa.experts_source,
     }
 
 
 def refresh_analysis(db: Session, ev: Event, hist, pipe, odds_client: OddsApiClient | None,
                      with_news: bool = True, with_llm: bool = True, sources: tuple | None = None) -> list[Prediction]:
-    """Run the full analysis and store it. `sources` = (odds, pms, items, status) skips fetching (demo/tests)."""
+    """Run the full analysis and store it. `sources` = (odds, pms, items, experts, status) skips fetching (demo/tests)."""
     from .llm.provider import Analyst
     from .pipeline import fetch_sources
 
     s = effective_settings(db)
     card = card_of(ev)
     if sources is None:
-        odds, pms, items, status = fetch_sources(card, s, odds_client, with_news=with_news)
+        odds, pms, items, experts, status = fetch_sources(card, s, odds_client, with_news=with_news)
         if not odds:
             odds = stored_odds(db, ev)
             if odds:
@@ -113,9 +114,9 @@ def refresh_analysis(db: Session, ev: Event, hist, pipe, odds_client: OddsApiCli
         if with_news:
             items += collect_social(card)
     else:
-        odds, pms, items, status = sources
+        odds, pms, items, experts, status = sources
     analyst = Analyst(s) if with_llm else None
-    analyses = analyze_card(card, hist, pipe, s, odds, pms, items, analyst)
+    analyses = analyze_card(card, hist, pipe, s, odds, pms, items, analyst, experts)
     by_key = fight_by_key(ev)
     out = []
     for fa in analyses:
@@ -173,15 +174,28 @@ def _store_snapshots(db: Session, f: Fight, fo, pms) -> None:
 
 
 def _store_posts(db: Session, f: Fight, fa: FightAnalysis) -> None:
+    from sqlalchemy.exc import IntegrityError
+
     from .sentiment import score
 
     for name, items in ((f.a, fa.news_a), (f.b, fa.news_b)):
         seen = set(db.scalars(select(SocialPost.link).where(SocialPost.fighter == name)).all())
         new = [i for i in items if i.link and i.link not in seen]
         for item, sc in zip(new, score([i.text for i in new])):
+            if item.link in seen:
+                continue  # the same link can appear twice in one fetch (e.g. RSS and a mirror)
             seen.add(item.link)
-            db.add(SocialPost(fighter=name, source=item.source, title=item.title[:500], link=item.link[:500],
-                              text=item.text[:4000], flags=item.flags, sentiment=sc))
+            try:
+                with db.begin_nested():
+                    db.add(SocialPost(fighter=name, source=item.source, title=item.title[:500],
+                                      link=item.link[:500], text=item.text[:4000], flags=item.flags,
+                                      sentiment=sc))
+                    db.flush()
+            except IntegrityError:
+                # Already stored under this fighter (race with another cycle, or a stale `seen`
+                # snapshot) - skip it rather than losing this whole analysis commit, predictions
+                # for every other fight included.
+                log.debug("Skipping duplicate social post for %s: %s", name, item.link)
 
 
 # ---------- live polling & alerts ----------

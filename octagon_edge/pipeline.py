@@ -9,7 +9,7 @@ import httpx
 from .config import Settings
 from .engine import model as M
 from .engine.features import History
-from .ingest import greco, news as news_mod, prediction_markets as pm
+from .ingest import experts as experts_mod, greco, news as news_mod, prediction_markets as pm
 from .ingest.card import Card
 from .ingest.odds_api import BudgetExceeded, OddsApiClient, parse as parse_odds
 
@@ -48,8 +48,8 @@ def load_model(hist: History, retrain: bool = False):
 
 
 def fetch_sources(card: Card, s: Settings, odds_client: OddsApiClient | None,
-                  with_news: bool = True) -> tuple[dict, dict, list, dict[str, str]]:
-    """Returns (odds by fight, prediction markets by fight, news items, status per source)."""
+                  with_news: bool = True) -> tuple[dict, dict, list, dict, dict[str, str]]:
+    """Returns (odds by fight, prediction markets by fight, news items, expert consensus by fight, status per source)."""
     status: dict[str, str] = {}
     http = httpx.Client(timeout=20, follow_redirects=True)
     odds = {}
@@ -77,4 +77,12 @@ def fetch_sources(card: Card, s: Settings, odds_client: OddsApiClient | None,
         reddit = news_mod.fetch_reddit(names, http)
         status["Reddit"] = f"ok: {len(reddit)} posts" if reddit else "failed or empty (rate-limited?)"
         items += reddit
-    return odds, pms, items, status
+    experts: dict = {}
+    if s.splitpicks_url:
+        try:
+            experts = experts_mod.fetch_consensus(s.splitpicks_url, card, http)
+            matched = sum(1 for c in experts.values() if c.n)
+            status["Expert picks (SplitPicks)"] = f"ok: {matched}/{len(card.fights)} fights, {sum(c.n for c in experts.values())} picks"
+        except httpx.HTTPError as exc:
+            status["Expert picks (SplitPicks)"] = f"failed: {exc}"
+    return odds, pms, items, experts, status

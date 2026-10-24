@@ -48,6 +48,8 @@ class Settings:
     edge_prefight: float
     edge_live: float
     model_weight: float
+    expert_weight: float
+    splitpicks_url: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -71,4 +73,6 @@ class Settings:
             edge_prefight=_f("EDGE_PREFIGHT", 0.04),
             edge_live=_f("EDGE_LIVE", 0.06),
             model_weight=_f("MODEL_WEIGHT", 0.35),
+            expert_weight=_f("EXPERT_WEIGHT", 0.15),
+            splitpicks_url=e("SPLITPICKS_URL", "") or "https://splitpicks.com/kings/ufc-333-volkanovski-vs-evloev",
         )

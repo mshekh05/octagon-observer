@@ -1,6 +1,6 @@
 import pytest
 
-from octagon_edge.engine.edge import blend, edge, expected_value, kelly_fraction, stake
+from octagon_edge.engine.edge import blend, edge, expected_value, kelly_fraction, scaled_weight, stake
 
 
 def test_edge_and_ev():
@@ -15,6 +15,13 @@ def test_kelly_and_caps():
     assert st.fraction == pytest.approx(0.025) and st.amount == 25.0
     capped = stake(0.80, 2.0, bankroll=1000, kelly_mult=0.25, max_pct=0.03)
     assert capped.fraction == 0.03
+
+
+def test_scaled_weight_ramps_up_with_sample_size():
+    assert scaled_weight(0.15, 0) == 0.0
+    assert scaled_weight(0.15, 1) == pytest.approx(0.05)
+    assert scaled_weight(0.15, 3) == pytest.approx(0.15)
+    assert scaled_weight(0.15, 10) == pytest.approx(0.15)  # never exceeds the configured weight
 
 
 def test_blend_leans_to_market_and_clamps_llm():

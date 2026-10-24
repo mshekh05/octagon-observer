@@ -12,6 +12,7 @@ from .engine import model as M
 from .engine.features import History
 from .engine.odds_math import american_to_decimal, best_price, consensus_fair_prob, devig_power
 from .ingest.card import Card, Fight
+from .ingest.experts import ExpertConsensus
 from .ingest.news import NewsItem, for_fighter, tone
 from .ingest.odds_api import FightOdds
 from .ingest.prediction_markets import MarketProb
@@ -62,6 +63,8 @@ class FightAnalysis:
     tone_a: dict = field(default_factory=dict)
     tone_b: dict = field(default_factory=dict)
     llm: dict | None = None
+    p_experts: float | None = None
+    experts_source: str = ""
 
     def name(self, side: int) -> str:
         return self.fight.a if side == 0 else self.fight.b
@@ -81,7 +84,8 @@ def market_prob(fight: Fight, odds: FightOdds | None, pms: list[MarketProb]) -> 
 
 def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settings,
                   odds: FightOdds | None = None, pms: list[MarketProb] | None = None,
-                  news: list[NewsItem] | None = None, analyst: Analyst | None = None) -> FightAnalysis:
+                  news: list[NewsItem] | None = None, analyst: Analyst | None = None,
+                  experts: ExpertConsensus | None = None) -> FightAnalysis:
     pms = pms or []
     news = news or []
     snap_a, snap_b = hist.current(fight.a, on), hist.current(fight.b, on)
@@ -110,6 +114,11 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
         fa.llm = analyst.analyze(llm_context(fa))
     adjust = float(fa.llm.get("news_adjustment_a", 0) or 0) if fa.llm else 0.0
     fa.p_final = E.blend(p_model, p_market, weight, llm_adjust=adjust)
+
+    if experts and experts.p_a is not None and s.expert_weight > 0:
+        fa.p_experts, fa.experts_source = experts.p_a, experts.summary
+        ew = E.scaled_weight(s.expert_weight, experts.n)
+        fa.p_final = E.blend(fa.p_final, experts.p_a, 1 - ew)
 
     sides = []
     real_books = {k: v for k, v in books.items() if k != "Reference"}
@@ -150,7 +159,9 @@ def llm_context(fa: FightAnalysis) -> dict:
 
 def analyze_card(card: Card, hist: History, pipe, s: Settings, odds: dict[str, FightOdds],
                  pms: dict[str, list[MarketProb]], news: list[NewsItem],
-                 analyst: Analyst | None = None) -> list[FightAnalysis]:
+                 analyst: Analyst | None = None,
+                 experts: dict[str, ExpertConsensus] | None = None) -> list[FightAnalysis]:
     on = pd.Timestamp(card.date)
-    return [analyze_fight(f, hist, pipe, on, s, odds.get(f.key), pms.get(f.key, []), news, analyst)
+    experts = experts or {}
+    return [analyze_fight(f, hist, pipe, on, s, odds.get(f.key), pms.get(f.key, []), news, analyst, experts.get(f.key))
             for f in card.fights]
