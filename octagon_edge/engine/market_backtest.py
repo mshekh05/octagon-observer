@@ -24,6 +24,8 @@ from . import model as M
 from .edge import logit, sigmoid, youth_adjust
 from .features import FEATURES, diff_frame
 
+WEIGHT_GRID = (0.0, 0.05, 0.10, 0.15, 0.20, 0.30)
+
 
 def walk_forward(rows: pd.DataFrame, start_year: int = 2014, cols: list[str] | None = None,
                  fit=None) -> pd.Series:
@@ -128,11 +130,17 @@ class MarketBacktest:
         gap = (self.data["a_age"] - self.data["b_age"]).to_numpy()[mask]
         return np.array([youth_adjust(q, None if np.isnan(g) else g, self.youth_adj) for q, g in zip(p, gap)])
 
+    def engine_loss(self, w: float, mask: np.ndarray) -> float:
+        """Log loss of the engine's own formula (blend at w, then the youth shift) on `mask`."""
+        d = self.data
+        p = self._with_youth(blend_at(d["p_model"].to_numpy()[mask], d["p_market"].to_numpy()[mask], w), mask)
+        return metrics(d["y"].to_numpy()[mask], p)["log_loss"]
+
     @property
     def suggested_weight(self) -> float:
-        """Model share of the fitted blend, as MODEL_WEIGHT; 0 when the model adds nothing."""
-        a, b = self.coefs_all
-        return float(min(max(a / (a + b), 0.0), 1.0)) if a + b > 0 else 0.0
+        """MODEL_WEIGHT that gives the engine's formula (with youth) the lowest log loss before the holdout."""
+        early = (self.data["date"] < self.holdout_from).to_numpy()
+        return min(WEIGHT_GRID, key=lambda w: self.engine_loss(w, early))
 
     def summary(self, thresholds=(0.02, 0.04, 0.06)) -> str:
         d = self.data
@@ -152,8 +160,11 @@ class MarketBacktest:
                  f"  Fitted blend    : {fmt(metrics(y[hold], apply_coefs(pm[hold], pk[hold], a, b)))}",
                  f"  Blend @ {self.configured_weight:.2f}    : {fmt(metrics(y[hold], blend_at(pm[hold], pk[hold], self.configured_weight)))}",
                  f"  ... + youth {self.youth_adj:.2f}: {fmt(metrics(y[hold], self._with_youth(blend_at(pm[hold], pk[hold], self.configured_weight), hold)))}",
-                 "", f"Fitted on all years: model x{self.coefs_all[0]:.2f}, market x{self.coefs_all[1]:.2f}"
-                 f"  -> suggested MODEL_WEIGHT {self.suggested_weight:.2f}",
+                 "", f"Fitted on all years: model x{self.coefs_all[0]:.2f}, market x{self.coefs_all[1]:.2f}",
+                 "Engine formula (blend, then youth) by MODEL_WEIGHT, before / from the holdout:",
+                 *[f"  {w:4.2f}  {self.engine_loss(w, ~hold):.4f} / {self.engine_loss(w, hold):.4f}"
+                   for w in WEIGHT_GRID],
+                 f"  -> suggested MODEL_WEIGHT {self.suggested_weight:.2f} (best before {self.holdout_from})",
                  "", f"Simulated flat bets at the historical price (holdout years, youth {self.youth_adj:.2f}):"]
         da, db = d["dec_a"].to_numpy()[hold], d["dec_b"].to_numpy()[hold]
         for w in sorted({self.configured_weight, round(self.suggested_weight, 2)}):

@@ -102,22 +102,24 @@ docker compose up -d watch
    - submissions, knockdowns and control time
    - finish rates, age, reach and layoff
    - opponent-adjusted striking (landed and absorbed against what each opponent usually allows and lands) and strength of schedule (average opponent Elo)
-3. **Blend.** The two are combined in log-odds space, weighted 83% market and 17% model (`MODEL_WEIGHT`, fitted by `octagon-edge backtest-market`).
+3. **Blend.** The price comes from the market (`MODEL_WEIGHT=0`). The stats model is shown on the Fight page to explain the fight, but in both backtests blending it in made the market worse, even at 5%. Any `MODEL_WEIGHT` above 0 mixes it back in, in log-odds space.
    - The model's weight is halved when a fighter has no UFC history.
    - A small shift toward the younger fighter (`YOUTH_ADJ`), because bookmakers under-price youth.
-   - Expert picks (`EXPERT_WEIGHT`) are a small nudge; a unanimous panel can't push past 75%.
+   - Expert picks from the [SplitPicks Kings Table](https://splitpicks.com/kings) are found automatically for the active card and shown on the Fight page, but they don't move the probability (`EXPERT_WEIGHT=0`). On 312 fights from Apr–Oct 2026, the Kalshi favourite won 74.2% and the expert consensus picked 67.4%; when they disagreed, the experts were right 26.7% of the time, and any weight made the engine worse (`octagon-edge backtest-experts`).
    - The LLM news nudge is off by default (`LLM_MAX_ADJUST=0`): short-notice and missed-weight news is already in the price.
 4. **Value.**
    - Before the fight: an edge of at least 4 points (`EDGE_PREFIGHT`) over the best US price. The threshold is 1.5× higher for low-confidence fights, including when the model and market disagree by more than 25 points (`MAX_MODEL_GAP`).
-   - Each pick says where the edge comes from: **line shopping** (the price beats the market consensus on its own) or **model**.
+   - Each pick says where the edge comes from: **line shopping** (the price beats the market consensus on its own) or **youth** (**model** if `MODEL_WEIGHT` > 0).
    - During the fight: the book price lags the Kalshi/Polymarket price by at least 6 points (`EDGE_LIVE`).
 5. **Stake.** A quarter of the Kelly-formula stake, capped at 3% of bankroll (`KELLY_FRACTION`, `MAX_STAKE_PCT`), and shrunk further the more the model and market disagree (half at a 10-point gap).
 
 **Honest numbers.**
 - On 1,587 fights since 2023 that it never saw during training, the stats model scores log loss 0.630 and picks the winner 65.9% of the time.
-- Against 5,563 fights with a historical price (2014–2026), the de-vigged market scores 0.608 and the stats model 0.655: the model alone does **not** beat the market. Blended at 17% with the youth shift, it scores slightly better than the market alone on 2021+ fights (0.5927 vs 0.5936).
+- Against 5,563 fights with a historical price (2014–2026), the de-vigged market scores 0.608 and the stats model 0.655: the model alone does **not** beat the market. On 2021+ fights the market plus the youth shift scores 0.5923, against 0.5936 for the market alone; adding the model at 5–15% changes that by less than 0.0003.
 - No bet rule showed a statistically significant profit in the simulation at historical prices. Treat flagged edges as "worth a closer look", not as guaranteed value, and watch the paper CLV on the **Bets** screen.
-- Run `octagon-edge backtest` and `octagon-edge backtest-market` to reproduce these numbers. The second downloads historical moneylines from the [ultimate_ufc_dataset](https://github.com/shortlikeafox/ultimate_ufc_dataset) (Apache-2.0).
+- Against Kalshi closing prices on 312 fights from 2026, the youth shift helped again (−2.9 thousandths of log loss, 90% CI −5.3 to −0.5) but the stats model hurt at every weight tried: +1.8 at 5% (90% CI +0.2 to +3.2), +7.3 at 17%. That's why `MODEL_WEIGHT` is 0.
+- With the model out of the price, a pick's edge comes from **line shopping** (one book off the consensus) or the **youth** shift.
+- Run `octagon-edge backtest`, `octagon-edge backtest-market` and `octagon-edge backtest-experts` to reproduce these numbers. The second downloads historical moneylines from the [ultimate_ufc_dataset](https://github.com/shortlikeafox/ultimate_ufc_dataset) (Apache-2.0).
 
 ## Alerts sent by `watch`
 - `VALUE`: a pre-fight price beats the blended probability.

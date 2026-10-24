@@ -42,6 +42,23 @@ def test_alert_uses_the_same_blend_as_the_analysis():
     assert not [a for a in alerts if a.title.endswith("+120")]
 
 
+def test_at_model_weight_zero_only_the_market_and_youth_price_the_fight():
+    e = AlertEngine(1000, 0.25, 0.03, edge_pre=0.04, edge_live=0.06, model_weight=0.0)
+    books = {"Book": (dec(120), dec(-140))}
+    # the model loves A, but at weight 0 that alone is no value
+    assert not [a for a in e.evaluate("A vs B", FightState(p_model=0.9, a="A", b="B"), books, None, False, {}, now=1)
+                if a.kind == "pre"]
+    # A is 10 years younger: the youth shift alone still isn't 4 points here
+    young = FightState(p_model=0.9, a="A", b="B", age_gap=-10, youth_adj=0.07)
+    assert not [a for a in e.evaluate("A vs B", young, books, None, False, {}, now=1) if a.kind == "pre"]
+    # an off-market price (line shopping) is value whatever the model says
+    shop = {"Book": (dec(120), dec(-140)), "Book2": (dec(120), dec(-140)), "Soft": (dec(200), dec(-260))}
+    alerts = [a for a in e.evaluate("A vs B", FightState(p_model=0.1, a="A", b="B"), shop, None, False, {}, now=1)
+              if a.kind == "pre"]
+    assert alerts and alerts[0].book == "Soft" and alerts[0].source == "line shopping"
+    assert "Market" in alerts[0].body
+
+
 def test_live_value_uses_prediction_market():
     st = FightState(p_model=0.5, a="A", b="B")
     alerts = engine().evaluate("A vs B", st, {"Book": (dec(150), dec(-180))}, pm_p=0.55, live=True,

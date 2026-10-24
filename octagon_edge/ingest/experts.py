@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 
 import httpx
 
 from .card import Card
+from .names import normalize
 
 log = logging.getLogger(__name__)
 
@@ -90,3 +92,50 @@ def parse(html: str, card: Card) -> dict[str, ExpertConsensus]:
 
 def fetch_consensus(url: str, card: Card, http: httpx.Client) -> dict[str, ExpertConsensus]:
     return parse(fetch_html(url, http), card)
+
+
+# ---------- finding an event's page ----------
+
+KINGS_INDEX = "https://splitpicks.com/kings"
+_EVENT_HREF = re.compile(r'href="(?:https://splitpicks\.com/)?(kings/[a-z0-9-]+?)(?:\.html)?"')
+
+
+def event_slug(event: str) -> str:
+    """SplitPicks' page slug for an event name.
+
+    "UFC 333: Volkanovski vs. Evloev" -> "ufc-333-volkanovski-vs-evloev"
+    "UFC Fight Night: Buckley vs. Malott" -> "ufc-buckley-vs-malott"
+    """
+    s = unicodedata.normalize("NFKD", event).encode("ascii", "ignore").decode().lower()
+    s = s.replace("fight night", "")
+    return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+
+
+def parse_index(html: str) -> dict[str, str]:
+    """slug -> page URL for every event linked from the Kings Table index."""
+    return {m.split("/", 1)[1]: f"https://splitpicks.com/{m}" for m in _EVENT_HREF.findall(html)
+            if m != "kings/kings"}
+
+
+def find_event_page(pages: dict[str, str], card: Card) -> str | None:
+    """The page for this card: exact slug, else the one naming both main-event surnames."""
+    if (url := pages.get(event_slug(card.event))) is not None:
+        return url
+    if not card.fights:
+        return None
+    main = card.fights[0]
+    surnames = [normalize(n).split()[-1] for n in (main.a, main.b)]
+    hits = [url for slug, url in pages.items() if all(s in slug.split("-") for s in surnames)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def resolve_url(setting: str, card: Card, http: httpx.Client) -> str | None:
+    """SPLITPICKS_URL: blank finds this card's page on the Kings Table index; "off" disables it."""
+    if setting.strip().lower() == "off":
+        return None
+    if setting.strip():
+        return setting.strip()
+    url = find_event_page(parse_index(fetch_html(KINGS_INDEX, http)), card)
+    if url is None:
+        log.info("SplitPicks: no Kings Table page found for %s", card.event)
+    return url

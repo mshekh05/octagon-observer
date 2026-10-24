@@ -123,11 +123,16 @@ class AlertEngine:
                 blended = E.final_prob(st.p_model, fair, weight, st.llm_adjust, st.p_experts, st.expert_weight,
                                        age_gap_years=st.age_gap, youth_per_5y=st.youth_adj)
                 p = blended if side == 0 else 1 - blended
-                why = f"Model {st.p_model * 100 if side == 0 else (1 - st.p_model) * 100:.0f}% blended with market."
+                if weight > 0:
+                    why = f"Model {st.p_model * 100 if side == 0 else (1 - st.p_model) * 100:.0f}% blended with market."
+                    shrink = E.disagreement_shrink(st.p_model, fair)
+                else:  # the model only explains; the price comes from the market and the youth shift
+                    why = f"Market {fair * 100 if side == 0 else (1 - fair) * 100:.0f}% after the youth adjustment."
+                    shrink = 1.0
                 if dec < 2:
                     why += " Favourites tend to shorten toward the close, so this price may not last."
                 a = self._value("pre", fight, name, p, book, dec, self.edge_pre * st.threshold_mult, why, False,
-                                E.disagreement_shrink(st.p_model, fair))
+                                shrink)
             if a:
                 ref = pm_p if live else fair
                 a.side, a.book, a.decimal, a.p = side, book, dec, p
@@ -136,7 +141,7 @@ class AlertEngine:
                     a.source = "market lag"
                 else:
                     shop = a.p_market is not None and E.edge(a.p_market, dec) >= self.edge_pre * st.threshold_mult
-                    a.source = "line shopping" if shop else "model"
+                    a.source = "line shopping" if shop else "model" if weight > 0 else "youth"
                 out.append(a)
             target = targets.get(name)
             if target and dec >= target:

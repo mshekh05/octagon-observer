@@ -127,10 +127,12 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
     p_model = M.predict(pipe, snap_a, snap_b)
     p_market, source, books = market_prob(fight, odds, pms)
     notes, confidence, weight = confidence_gate(fight, snap_a, snap_b, s.model_weight)
+    model_prices = s.model_weight > 0  # at 0 the model only explains; the model-based rules don't apply
     if p_model is not None and p_market is not None and abs(p_model - p_market) > s.max_model_gap:
         notes.append(f"Stats model and market disagree by {abs(p_model - p_market) * 100:.0f} points - usually "
                      "the model is missing something (injury, level of opposition, pre-UFC record).")
-        confidence = "low"
+        if model_prices:
+            confidence = "low"
 
     fa = FightAnalysis(fight, hist.record(fight.a), hist.record(fight.b), snap_a, snap_b,
                        p_model, p_market, source, None, books, pms, confidence=confidence, notes=notes)
@@ -142,9 +144,9 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
     adjust = float(fa.llm.get("news_adjustment_a", 0) or 0) if fa.llm else 0.0
     adjust = max(-s.llm_max_adjust, min(s.llm_max_adjust, adjust))
     ew = 0.0
-    if experts and experts.p_a is not None and s.expert_weight > 0:
-        fa.p_experts, fa.experts_source = experts.p_a, experts.summary
-        ew = E.scaled_weight(s.expert_weight, experts.n)
+    if experts and experts.p_a is not None:
+        fa.p_experts, fa.experts_source = experts.p_a, experts.summary  # shown even at weight 0
+        ew = E.scaled_weight(s.expert_weight, experts.n) if s.expert_weight > 0 else 0.0
     age_gap = snap_a["age"] - snap_b["age"] if pd.notna(snap_a["age"]) and pd.notna(snap_b["age"]) else None
     fa.blend_inputs = {"model_weight": weight, "llm_adjust": adjust, "p_experts": fa.p_experts,
                        "expert_weight": ew, "threshold_mult": threshold_mult(confidence),
@@ -155,7 +157,8 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
     sides = []
     real_books = {k: v for k, v in books.items() if k != "Reference"}
     threshold = s.edge_prefight * threshold_mult(confidence)
-    shrink = E.disagreement_shrink(p_model, p_market)
+    shrink = E.disagreement_shrink(p_model, p_market) if model_prices else 1.0
+    other_source = "model" if model_prices else "youth"  # what moves p_final off the market
     for side in (0, 1):
         p = fa.p_final if side == 0 else 1 - fa.p_final
         bp = best_price(real_books or books, side)
@@ -166,7 +169,7 @@ def analyze_fight(fight: Fight, hist: History, pipe, on: pd.Timestamp, s: Settin
         st = E.stake(p, dec, s.bankroll, s.kelly_fraction, s.max_stake_pct, shrink)
         m_edge = None if p_market is None else E.edge(p_market if side == 0 else 1 - p_market, dec)
         sides.append(SideVerdict(book, dec, E.edge(p, dec), E.expected_value(p, dec), st.amount, st.fraction,
-                                 m_edge, "line shopping" if m_edge is not None and m_edge >= threshold else "model"))
+                                 m_edge, "line shopping" if m_edge is not None and m_edge >= threshold else other_source))
     fa.sides = tuple(sides)
     best = max((0, 1), key=lambda i: fa.sides[i].edge if fa.sides[i].edge is not None else -1)
     if fa.sides[best].edge is not None and fa.sides[best].edge >= threshold and real_books:

@@ -36,6 +36,10 @@ def main(argv: list[str] | None = None) -> None:
     bm.add_argument("--start-year", type=int, default=2014)
     bm.add_argument("--holdout-from", default="2021-01-01")
 
+    be = sub.add_parser("backtest-experts",
+                        help="Test whether SplitPicks expert picks add anything to Kalshi prices and the model")
+    be.add_argument("--since", default="2026-03-01")
+
     sub.add_parser("test-alert", help="Send a test notification to every configured channel")
 
     dr = sub.add_parser("doctor", help="Check every key and data source and explain fixes")
@@ -88,6 +92,15 @@ def main(argv: list[str] | None = None) -> None:
         hist = load_history()
         print(MB.run(hist.rows, load_odds_history(hist), s.model_weight, args.start_year,
                      args.holdout_from, youth_adj=s.youth_adj).summary())
+        return
+
+    if args.cmd == "backtest-experts":
+        from .engine import expert_backtest as EB
+        from .pipeline import load_expert_history
+
+        hist = load_history()
+        experts, kalshi = load_expert_history(args.since)
+        print(EB.run(hist.rows, experts, kalshi, s.model_weight, s.youth_adj, s.expert_weight).summary())
         return
 
     card = load_card(args.card)
