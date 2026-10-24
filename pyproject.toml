@@ -1,0 +1,41 @@
+[project]
+name = "octagon-edge"
+version = "0.1.0"
+description = "UFC betting analytics: market de-vig, stats model, edge alerts"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "pandas>=2.2",
+  "numpy>=1.26",
+  "scikit-learn>=1.5",
+  "joblib>=1.4",
+  "anthropic>=2.0",
+]
+
+[project.optional-dependencies]
+server = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "sqlalchemy>=2.0",
+  "apscheduler>=3.10,<4",
+  "pywebpush>=2.0",
+  "psycopg[binary]>=3.2",
+]
+ml = ["transformers>=4.44", "torch>=2.4"]
+dev = ["pytest>=8", "octagon-edge[server]"]
+
+[project.scripts]
+octagon-edge = "octagon_edge.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["octagon_edge*"]
+
+[tool.setuptools.package-data]
+octagon_edge = ["data/cards/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

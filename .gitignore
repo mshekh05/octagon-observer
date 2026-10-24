@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.egg-info/
+/data/cache/
+/data/*.db
+/data/*.joblib
+reports/*.html
+.pytest_cache/
+.venv/
+/data/
+!/data/.gitkeep
+node_modules/
+frontend/dist/

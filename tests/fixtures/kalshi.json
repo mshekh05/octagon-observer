@@ -1,0 +1,6 @@
+{"markets": [
+ {"ticker": "KXUFCFIGHT-26OCT24VOLEVL-VOL", "title": "Will Alexander Volkanovski win the Volkanovski vs Evloev fight?", "yes_sub_title": "Alexander Volkanovski", "yes_bid_dollars": "0.4900", "yes_ask_dollars": "0.5100"},
+ {"ticker": "KXUFCFIGHT-26OCT24VOLEVL-EVL", "title": "Will Movsar Evloev win the Volkanovski vs Evloev fight?", "yes_sub_title": "Movsar Evloev", "yes_bid": 49, "yes_ask": 51},
+ {"ticker": "KXUFCFIGHT-26OCT24YANDVA-YAN", "title": "Will Petr Yan win?", "yes_sub_title": "Petr Yan", "last_price": 59},
+ {"ticker": "KXUFCFIGHT-X", "title": "Will Alexander Volkov win?", "yes_sub_title": "Alexander Volkov", "yes_bid": 53, "yes_ask": 55}
+]}

@@ -1,0 +1,23 @@
+{
+  "event": "UFC 333: Volkanovski vs. Evloev",
+  "date": "2026-10-24",
+  "venue": "Etihad Arena, Abu Dhabi",
+  "start_et": {"early_prelims": "10:00", "prelims": "12:00", "main_card": "14:00"},
+  "source_note": "Card and reference odds from press previews on 23 Oct 2026 (Yahoo, SportsLine, Covers). Bout order and lines can change - live odds sources override reference odds.",
+  "fights": [
+    {"segment": "main", "a": "Alexander Volkanovski", "b": "Movsar Evloev", "weightclass": "Featherweight", "title": true, "rounds": 5, "ref_odds": [-115, -105]},
+    {"segment": "main", "a": "Petr Yan", "b": "Merab Dvalishvili", "weightclass": "Bantamweight", "title": true, "rounds": 5, "ref_odds": [-175, 145]},
+    {"segment": "main", "a": "Lone'er Kavanagh", "b": "Ramazan Temirov", "weightclass": "Flyweight", "rounds": 3},
+    {"segment": "main", "a": "Alexander Volkov", "b": "Rizvan Kuniev", "weightclass": "Heavyweight", "rounds": 3},
+    {"segment": "main", "a": "Aaron Pico", "b": "Losene Keita", "weightclass": "Featherweight", "rounds": 3},
+    {"segment": "prelims", "a": "Azamat Murzakanov", "b": "Dominick Reyes", "weightclass": "Light Heavyweight", "rounds": 3},
+    {"segment": "prelims", "a": "Nikita Krylov", "b": "Abdul Rakhman Yakhyaev", "weightclass": "Light Heavyweight", "rounds": 3},
+    {"segment": "prelims", "a": "Abus Magomedov", "b": "Cam Rowston", "weightclass": "Middleweight", "rounds": 3},
+    {"segment": "prelims", "a": "Grant Dawson", "b": "Nurullo Aliev", "weightclass": "Lightweight", "rounds": 3},
+    {"segment": "early", "a": "Colby Thicknesse", "b": "Asaf Chopurov", "weightclass": "Bantamweight", "rounds": 3},
+    {"segment": "early", "a": "Abubakar Vagaev", "b": "Jacob Malkoun", "weightclass": "Middleweight", "rounds": 3},
+    {"segment": "early", "a": "Bolaji Oki", "b": "Daniel Santos", "weightclass": "Lightweight", "rounds": 3},
+    {"segment": "early", "a": "Kody Steele", "b": "Noah Gugnon", "weightclass": "Lightweight", "rounds": 3},
+    {"segment": "early", "a": "Iasmin Lucindo", "b": "Nicolle Caliari", "weightclass": "Women's Strawweight", "rounds": 3}
+  ]
+}

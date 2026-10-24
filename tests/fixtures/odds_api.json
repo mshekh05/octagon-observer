@@ -1,0 +1,16 @@
+[
+ {"id": "e1", "sport_key": "mma_mixed_martial_arts", "commence_time": "2026-10-24T22:00:00Z",
+  "home_team": "Alex Volkanovski", "away_team": "Movsar Evloev",
+  "bookmakers": [
+   {"key": "draftkings", "title": "DraftKings", "markets": [{"key": "h2h", "outcomes": [
+     {"name": "Alex Volkanovski", "price": -115}, {"name": "Movsar Evloev", "price": -105}]}]},
+   {"key": "fanduel", "title": "FanDuel", "markets": [{"key": "h2h", "outcomes": [
+     {"name": "Movsar Evloev", "price": 102}, {"name": "Alex Volkanovski", "price": -122}]}]}
+  ]},
+ {"id": "e2", "sport_key": "mma_mixed_martial_arts", "commence_time": "2026-10-24T21:30:00Z",
+  "home_team": "Merab Dvalishvili", "away_team": "Petr Yan",
+  "bookmakers": [{"key": "betmgm", "title": "BetMGM", "markets": [{"key": "h2h", "outcomes": [
+     {"name": "Merab Dvalishvili", "price": 150}, {"name": "Petr Yan", "price": -180}]}]}]},
+ {"id": "e3", "sport_key": "mma_mixed_martial_arts", "commence_time": "2026-11-01T22:00:00Z",
+  "home_team": "Someone Else", "away_team": "Another Guy", "bookmakers": []}
+]

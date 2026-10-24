@@ -1,0 +1,4 @@
+[{"title": "UFC 333", "markets": [
+  {"question": "Volkanovski vs. Evloev", "outcomes": "[\"Movsar Evloev\", \"Alexander Volkanovski\"]", "outcomePrices": "[\"0.52\", \"0.48\"]", "closed": false},
+  {"question": "Dawson vs. Aliev", "outcomes": "[\"Yes\", \"No\"]", "outcomePrices": "[\"0.6\", \"0.4\"]", "closed": false}
+]}]
