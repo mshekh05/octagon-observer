@@ -15,7 +15,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import Event, Fight, FightResult, Forecast, PlanPick, Prediction, latest, utcnow
+from .db import Bet, Event, Fight, FightResult, Forecast, PlanPick, Prediction, latest, utcnow
 from .ingest.names import same_fighter
 
 
@@ -106,6 +106,10 @@ def settle(db: Session, f: Fight) -> None:
         pick.result = "open" if won is None else ("won" if won else "lost")
         if pick.market == "moneyline" and r.winner is None:
             pick.result = "void"
+    for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.market != "moneyline", Bet.result == "open")):
+        won = outcome_won(b.market, b.outcome, r, f.rounds)
+        if won is not None:
+            b.result, b.pnl = ("won", round(b.stake * (b.decimal - 1), 2)) if won else ("lost", -b.stake)
 
 
 def settle_from_history(db: Session, ev: Event, fights: pd.DataFrame | None = None) -> int:

@@ -450,6 +450,8 @@ async def stream(request: Request, since: int = 0):
 class BetBody(BaseModel):
     fight_id: int
     side: int = Field(ge=0, le=1)
+    market: str = Field(default="moneyline", pattern="^(moneyline|prop|total_rounds)$")
+    outcome: str = Field(default="", max_length=30)  # e.g. "b_ko", "distance", "over 2.5"
     book: str = ""
     american: float | None = None
     decimal: float | None = Field(default=None, gt=1)
@@ -459,7 +461,13 @@ class BetBody(BaseModel):
 
 
 def _bet_json(b: Bet, f: Fight) -> dict:
-    return {"id": b.id, "fight_id": b.fight_id, "fight": f.key, "pick": f.a if b.side == 0 else f.b,
+    if b.market == "prop":
+        pick = S.prop_label(b.outcome, f)
+    elif b.market == "total_rounds":
+        pick = f"{b.outcome.capitalize()} rounds"
+    else:
+        pick = f.a if b.side == 0 else f.b
+    return {"id": b.id, "fight_id": b.fight_id, "fight": f.key, "pick": pick, "market": b.market, "outcome": b.outcome,
             "side": b.side, "book": b.book, "decimal": b.decimal, "stake": b.stake, "live": b.live,
             "placed_at": b.placed_at.isoformat(), "closing_decimal": b.closing_decimal, "clv": S.clv(b),
             "result": b.result, "pnl": b.pnl, "note": b.note}
@@ -478,7 +486,15 @@ def add_bet(body: BetBody, db: Session = Depends(get_db)):
     dec = body.decimal or (american_to_decimal(body.american) if body.american else None)
     if not dec:
         raise HTTPException(400, "Give the price as american or decimal odds")
-    b = Bet(fight_id=f.id, side=body.side, book=body.book, decimal=dec, stake=body.stake,
+    if body.market != "moneyline":
+        try:
+            known = body.market == "total_rounds" and body.outcome.split()[0] in ("over", "under") and float(body.outcome.split()[1]) > 0
+            known = known or (body.market == "prop" and bool(S.prop_label(body.outcome, f)))
+        except (KeyError, ValueError, IndexError):
+            known = False
+        if not known:
+            raise HTTPException(400, f"Unknown {body.market} outcome: {body.outcome!r}")
+    b = Bet(fight_id=f.id, side=body.side, market=body.market, outcome=body.outcome, book=body.book, decimal=dec, stake=body.stake,
             live=body.live or f.status == "live", note=body.note)
     db.add(b)
     db.commit()

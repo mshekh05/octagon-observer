@@ -267,6 +267,8 @@ export interface BetRow {
   fight_id: number;
   fight: string;
   pick: string;
+  market: "moneyline" | "prop" | "total_rounds";
+  outcome: string;
   side: 0 | 1;
   book: string;
   decimal: number;

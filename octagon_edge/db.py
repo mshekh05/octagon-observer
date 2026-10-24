@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 
 from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint,
-                        create_engine, select)
+                        create_engine, inspect, select, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 from .config import DATA_DIR
@@ -186,6 +186,9 @@ class Bet(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     fight_id: Mapped[int] = mapped_column(ForeignKey("fight.id"), index=True)
     side: Mapped[int] = mapped_column(Integer)
+    # moneyline (by side), or a prop / total_rounds outcome as the plan names them ("b_ko", "over 2.5")
+    market: Mapped[str] = mapped_column(String(20), default="moneyline", server_default="moneyline")
+    outcome: Mapped[str] = mapped_column(String(30), default="", server_default="")
     book: Mapped[str] = mapped_column(String(60), default="")
     decimal: Mapped[float] = mapped_column(Float)
     stake: Mapped[float] = mapped_column(Float)
@@ -254,6 +257,21 @@ def database_url() -> str:
 _engines: dict[str, sessionmaker] = {}
 
 
+def _add_missing_columns(engine) -> None:
+    """create_all only makes new tables, so add columns later versions gave existing tables.
+
+    Only columns with a server default are added, so existing rows read as before.
+    """
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in have and col.server_default is not None:
+                    conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)} "
+                                      f"NOT NULL DEFAULT '{col.server_default.arg}'"))
+
+
 def sessions(url: str | None = None) -> sessionmaker[Session]:
     url = url or database_url()
     if url not in _engines:
@@ -262,6 +280,7 @@ def sessions(url: str | None = None) -> sessionmaker[Session]:
         engine = create_engine(url, pool_pre_ping=True,
                                connect_args={"check_same_thread": False} if url.startswith("sqlite") else {})
         Base.metadata.create_all(engine)
+        _add_missing_columns(engine)
         _engines[url] = sessionmaker(engine, expire_on_commit=False)
     return _engines[url]
 

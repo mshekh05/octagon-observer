@@ -595,7 +595,8 @@ def set_status(db: Session, f: Fight, status: str, winner: int | None = None) ->
     if status == "live" and f.status == "scheduled":
         f.started_at = utcnow()
         # closing line = last pre-fight price, used for CLV
-        for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.closing_decimal.is_(None), Bet.live.is_(False))):
+        for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.market == "moneyline", Bet.closing_decimal.is_(None),
+                                              Bet.live.is_(False))):
             b.closing_decimal = best_current_price(db, f, b.side, b.book)
         books = latest_books(db, f)
         fair = consensus_fair_prob(books) if books else None
@@ -609,8 +610,8 @@ def set_status(db: Session, f: Fight, status: str, winner: int | None = None) ->
         if f.started_at is None:  # finished without being marked live: freeze what the engine said
             tracking.freeze(db, f)
         f.winner = winner
-        for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.result == "open")):
-            settle_bet(b, winner)
+        for b in db.scalars(select(Bet).where(Bet.fight_id == f.id, Bet.market == "moneyline", Bet.result == "open")):
+            settle_bet(b, winner)  # prop bets settle from the method and round, in tracking.settle
         for pp in db.scalars(select(PaperPick).where(PaperPick.fight_id == f.id, PaperPick.result == "open")):
             pp.result = "void" if winner is None else "won" if winner == pp.side else "lost"
         if db.get(FightResult, f.id) is None:

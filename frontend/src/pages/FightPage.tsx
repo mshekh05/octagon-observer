@@ -183,19 +183,31 @@ function LogBet({ f, home }: { f: FightDetail; home: string }) {
   const [price, setPrice] = useState(f.pick ? american(f.pick.decimal).replace("−", "-") : "");
   const [book, setBook] = useState(home);
   const [stake, setStake] = useState(f.pick ? String(Math.round(f.pick.stake)) : "");
+  // "moneyline", or "prop:b_ko" / "total_rounds:over 2.5", so a prop bet settles on the method and round
+  const [bet, setBet] = useState("moneyline");
+  const props = useQuery({ queryKey: ["props", f.id], queryFn: () => api<Props>(`/fights/${f.id}/props`) });
+  const [market, outcome] = bet === "moneyline" ? ["moneyline", ""] : [bet.slice(0, bet.indexOf(":")), bet.slice(bet.indexOf(":") + 1)];
   const m = useMutation({
-    mutationFn: () => post("/bets", { fight_id: f.id, side, book, american: Number(price), stake: Number(stake) }),
+    mutationFn: () => post("/bets", { fight_id: f.id, side, market, outcome, book, american: Number(price), stake: Number(stake) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bets"] }),
   });
   const valid = Math.abs(Number(price)) >= 100 && Number(stake) > 0;
   return (
     <form className="pad stack" onSubmit={(e) => { e.preventDefault(); if (valid) m.mutate(); }}>
-      <div className="row" role="radiogroup" aria-label="Pick">
+      <label className="field">Bet type
+        <select className="in" value={bet} onChange={(e) => setBet(e.target.value)}>
+          <option value="moneyline">Who wins</option>
+          {(props.data?.outcomes ?? []).map((o) => <option key={o.outcome} value={`prop:${o.outcome}`}>{o.label}</option>)}
+          {(props.data?.totals ?? []).flatMap((t) => ["over", "under"].map((s) => (
+            <option key={`${s}${t.point}`} value={`total_rounds:${s} ${t.point}`}>{s === "over" ? "Over" : "Under"} {t.point} rounds</option>)))}
+        </select>
+      </label>
+      {market === "moneyline" && <div className="row" role="radiogroup" aria-label="Pick">
         {[f.a, f.b].map((n, i) => (
           <button key={n} type="button" role="radio" aria-checked={side === i} className={`btn${side === i ? " sel" : ""}`}
             onClick={() => setSide(i as 0 | 1)}>{surname(n)}</button>
         ))}
-      </div>
+      </div>}
       <div className="row">
         <label className="field">Price (US odds)<input className="in fig" inputMode="numeric" value={price} placeholder="+150" onChange={(e) => setPrice(e.target.value)} /></label>
         <label className="field">Stake<input className="in fig" inputMode="decimal" value={stake} placeholder="20" onChange={(e) => setStake(e.target.value)} /></label>

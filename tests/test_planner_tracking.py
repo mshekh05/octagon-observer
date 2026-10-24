@@ -106,3 +106,36 @@ def test_fight_start_freezes_forecasts_and_plan_then_result_settles_them(db):
     card = tracking.scorecard(db)
     assert card["markets"][0]["market"] == "moneyline" and card["markets"][0]["n"] == 1
     assert card["tiers"]["value"]["won"] == 1 and card["tiers"]["value"]["profit"] > 0
+
+
+def test_prop_bets_settle_on_the_method_not_the_winner(db):
+    from octagon_edge.db import Bet
+
+    ev = S.sync_card(db, "ufc-333")
+    f = ev.fights[2]
+    ko = Bet(fight_id=f.id, side=1, market="prop", outcome="b_ko", decimal=4.85, stake=20)
+    ml = Bet(fight_id=f.id, side=1, decimal=2.0, stake=10)
+    db.add_all([ko, ml])
+    db.commit()
+    S.set_status(db, f, "live")
+    S.set_status(db, f, "finished", 1)  # winner known, method not yet: the prop waits
+    assert ml.result == "won" and ko.result == "open"
+    tracking.record_result(db, f, 1, "DEC", 3)
+    assert ko.result == "lost" and ko.pnl == -20
+
+
+def test_old_databases_get_new_columns(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE bet (id INTEGER PRIMARY KEY, fight_id INTEGER, side INTEGER, book VARCHAR(60), decimal FLOAT,"
+                " stake FLOAT, placed_at DATETIME, live BOOLEAN, closing_decimal FLOAT, result VARCHAR(8), pnl FLOAT, note TEXT)")
+    con.execute("INSERT INTO bet (fight_id, side, decimal, stake, result, note, book, live) VALUES (1, 1, 4.85, 20, 'open', '', 'Fanatics', 0)")
+    con.commit()
+    con.close()
+    from octagon_edge.db import Bet
+
+    with sessions(f"sqlite:///{path}")() as session:
+        b = session.query(Bet).one()
+        assert b.market == "moneyline" and b.outcome == ""
