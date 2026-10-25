@@ -7,20 +7,22 @@ GitHub `main` and gives you **Start**, **Stop**, **Redeploy** and **Logs**.
 
 | What | Where |
 |---|---|
-| Secrets and settings (mode 600) | `/srv/appdata/octagon-edge/octagon-edge.env` |
+| Secrets and settings (mode 600, root) | `/etc/dokploy/octagon-edge/octagon-edge.env` (Dokploy can only read `/etc/dokploy`); backup copy `/srv/appdata/octagon-edge/octagon-edge.env.bak` |
 | App data (VAPID keys, caches, models, snapshots) | `/srv/appdata/octagon-edge/data` |
 | Reports | `/srv/appdata/octagon-edge/reports` |
-| Nightly database dumps (14 days kept) | `/srv/appdata/octagon-edge/backups` |
+| Nightly database dumps (Dokploy schedule on `db`, 07:00 UTC, 14 days kept) | `/srv/appdata/octagon-edge/backups` |
 | Postgres | docker volume `octagon-edge_pgdata` (fixed name, survives redeploys) |
 | Web app | `127.0.0.1:8000`, published by `tailscale serve` at `https://apps.wolverine-firefighter.ts.net:8445` |
 
-Everything under `/srv/appdata` is in the restic tier-1 backup. The repo folder Dokploy clones is
+Everything under `/srv/appdata` is in the restic tier-1 backup. The env file lives under `/etc/dokploy` because
+Dokploy runs `docker compose` inside its own container, which only mounts `/etc/dokploy`: after editing it, refresh
+the `.bak` copy (`sudo install -m 600 /etc/dokploy/octagon-edge/octagon-edge.env /srv/appdata/octagon-edge/octagon-edge.env.bak`). The repo folder Dokploy clones is
 throwaway: nothing persistent lives there.
 
 Dokploy's environment for the service holds **paths only**, never secrets:
 
 ```
-ENV_FILE=/srv/appdata/octagon-edge/octagon-edge.env
+ENV_FILE=/etc/dokploy/octagon-edge/octagon-edge.env
 DATA_DIR=/srv/appdata/octagon-edge/data
 REPORTS_DIR=/srv/appdata/octagon-edge/reports
 BACKUP_DIR=/srv/appdata/octagon-edge/backups
@@ -37,11 +39,11 @@ BACKUP_DIR=/srv/appdata/octagon-edge/backups
 - **Run the CLI** (doctor, settle, backtests): on apps, in the folder Dokploy deploys to,
 
   ```bash
-  cd /etc/dokploy/compose/<app-name>/code
-  docker compose -p <app-name> --env-file .env run --rm cli doctor --no-send
+  cd /etc/dokploy/compose/octagon-edge-octagonedge-vumbzl/code
+  sudo docker compose -p octagon-edge-octagonedge-vumbzl --env-file .env run --rm cli doctor --no-send
   ```
 
-  `<app-name>` is shown on the service's General tab in Dokploy.
+  (`octagon-edge-octagonedge-vumbzl` is the app name shown under the service title in Dokploy.)
 
 ## Never run the old watcher alongside it
 
@@ -53,7 +55,7 @@ the worker. Running both doubles the ntfy alerts and the Odds API spend.
 Stop the service in Dokploy, then from a checkout of an earlier commit:
 
 ```bash
-ENV_FILE=/srv/appdata/octagon-edge/octagon-edge.env DATA_DIR=/srv/appdata/octagon-edge/data \
+ENV_FILE=/etc/dokploy/octagon-edge/octagon-edge.env DATA_DIR=/srv/appdata/octagon-edge/data \
 REPORTS_DIR=/srv/appdata/octagon-edge/reports BACKUP_DIR=/srv/appdata/octagon-edge/backups \
 docker compose -p octagon-edge up -d --build
 ```
